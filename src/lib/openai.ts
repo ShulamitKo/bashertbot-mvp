@@ -1,234 +1,290 @@
-import axios from 'axios'
-import { Candidate, AIMatchResult } from '@/types'
+import OpenAI from 'openai'
+import { MatchProposal } from '../types'
+import { 
+  DetailedCandidate,
+  applyHardFilters, 
+  calculateLogicalScore, 
+  passesLogicalThreshold 
+} from './google-sheets'
 
-// פונקציות עבודה עם OpenAI GPT
+const openai = new OpenAI({
+  apiKey: (import.meta as any).env.VITE_OPENAI_API_KEY,
+  dangerouslyAllowBrowser: true
+})
 
-interface OpenAIResponse {
-  choices: {
-    message: {
-      content: string
-    }
-  }[]
+// טיפוס לתשובת GPT
+interface GPTMatchResponse {
+  score: number
+  summary: string
+  strengths?: string[]
+  concerns?: string[]
 }
 
-// יצירת התאמה באמצעות GPT
-export async function generateMatch(
-  boy: Candidate,
-  girl: Candidate,
-  customPrompt: string,
-  apiKey: string
-): Promise<AIMatchResult> {
+// פונקציה ליצירת פרומפט מותאם לזוג ספציפי
+const createMatchPrompt = (male: DetailedCandidate, female: DetailedCandidate): string => {
+  return `האם קיימת התאמה זוגית בין שני המועמדים הבאים:
+
+**בחור:**
+- שם: ${male.name}
+- גיל: ${male.age}
+- מצב משפחתי: ${male.maritalStatus}
+- רמה דתית: ${male.religiousLevel}
+- עדה: ${male.community}
+- מקום מגורים: ${male.location}
+- השכלה: ${male.education}
+- מקצוע: ${male.profession}
+- תחביבים: ${male.hobbies || 'לא צוין'}
+- ערכים ואמונות: ${male.valuesAndBeliefs || 'לא צוין'}
+- מה אני מחפש: ${male.lookingFor || 'לא צוין'}
+- חשוב לי: ${male.importantQualities || 'לא צוין'}
+- דיל ברייקרס: ${male.dealBreakers || 'אין'}
+
+**בחורה:**
+- שם: ${female.name}
+- גיל: ${female.age}
+- מצב משפחתי: ${female.maritalStatus}
+- רמה דתית: ${female.religiousLevel}
+- עדה: ${female.community}
+- מקום מגורים: ${female.location}
+- השכלה: ${female.education}
+- מקצוע: ${female.profession}
+- תחביבים: ${female.hobbies || 'לא צוין'}
+- ערכים ואמונות: ${female.valuesAndBeliefs || 'לא צוין'}
+- מה אני מחפשת: ${female.lookingFor || 'לא צוין'}
+- חשוב לי: ${female.importantQualities || 'לא צוין'}
+- דיל ברייקרס: ${female.dealBreakers || 'אין'}
+
+בצע ניתוח עומק של ההתאמה הזוגית, תוך התחשבות ב:
+1. תאימות ערכית ורוחנית
+2. יכולת תקשורת וחיבור רגשי פוטנציאלי
+3. התאמה בסגנון חיים ובציפיות
+4. אתגרים פוטנציאליים וחוזקות
+
+אנא החזר בפורמט JSON:
+{
+  "score": [מספר בין 1-10],
+  "summary": "[נימוק קצר ומדויק למתן הציון]",
+  "strengths": ["נקודת חוזק 1", "נקודת חוזק 2", "נקודת חוזק 3"],
+  "concerns": ["אתגר 1", "אתגר 2"]
+}`
+}
+
+// פונקציה לפנייה ל-GPT לזוג בודד
+const analyzeMatchWithGPT = async (male: DetailedCandidate, female: DetailedCandidate): Promise<GPTMatchResponse> => {
+  console.log(`🤖 שולח ל-GPT לניתוח: ${male.name} - ${female.name}`)
+  
   try {
-    const prompt = createMatchingPrompt(boy, girl, customPrompt)
-    
-    const response = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'system',
-            content: 'אתה שדכן מקצועי ומנוסה שמתמחה בהתאמות לקהילה הדתית. אתה מנתח פרופילים ומעריך את רמת ההתאמה בין זוגות לפי קריטריונים רלוונטיים.'
-          },
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
-        max_tokens: 1000,
-        temperature: 0.7
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini', // מהיר וזול יותר מ-gpt-4
+      messages: [
+        {
+          role: 'system',
+          content: 'אתה שדכן מקצועי ומנוסה המתמחה בהתאמות זוגיות במגזר הדתי. אתה מנתח בזהירות את התאימות בין מועמדים ונותן ציון מדויק.'
+        },
+        {
+          role: 'user',
+          content: createMatchPrompt(male, female)
         }
-      }
-    )
-
-    const data: OpenAIResponse = response.data
-    const result = data.choices[0]?.message?.content
-
-    if (!result) {
-      throw new Error('לא התקבלה תגובה מ-GPT')
-    }
-
-    return parseGPTResponse(result)
-  } catch (error: any) {
-    console.error('שגיאה בקריאה ל-OpenAI:', error)
-    
-    if (error.response?.status === 401) {
-      throw new Error('מפתח OpenAI לא תקין')
-    } else if (error.response?.status === 429) {
-      throw new Error('חרגת ממכסת הקריאות ל-OpenAI')
-    } else {
-      throw new Error('שגיאה בחיבור ל-OpenAI: ' + (error.message || 'שגיאה לא ידועה'))
-    }
-  }
-}
-
-// יצירת פרומפט להתאמה
-function createMatchingPrompt(boy: Candidate, girl: Candidate, customPrompt: string): string {
-  return `
-נתח את ההתאמה בין שני המועמדים הבאים ותן ציון התאמה מ-0 עד 1:
-
-**הבחור:**
-- שם: ${boy.name}
-- גיל: ${boy.age}
-- עיר: ${boy.city}
-- עדה: ${boy.edah}
-- השכלה: ${boy.education}
-- מקצוע: ${boy.profession}
-- רקע משפחתי: ${boy.familyBackground}
-- מחפש: ${boy.lookingFor}
-- הערות: ${boy.notes || 'אין'}
-
-**הבחורה:**
-- שם: ${girl.name}
-- גיל: ${girl.age}
-- עיר: ${girl.city}
-- עדה: ${girl.edah}
-- השכלה: ${girl.education}
-- מקצוע: ${girl.profession}
-- רקע משפחתי: ${girl.familyBackground}
-- מחפשת: ${girl.lookingFor}
-- הערות: ${girl.notes || 'אין'}
-
-**קריטריונים להתאמה:**
-${customPrompt}
-
-אנא החזר תגובה במבנה הבא:
-SCORE: [ציון בין 0.0 ל-1.0]
-RECOMMENDATION: [highly_recommended/recommended/consider/not_recommended]
-REASONING: [הסבר מפורט על הציון]
-PROS: [יתרונות ההתאמה, מופרדים בפסיקים]
-CONS: [חסרונות או אתגרים, מופרדים בפסיקים]
-`
-}
-
-// פענוח תגובת GPT
-function parseGPTResponse(response: string): AIMatchResult {
-  try {
-    const lines = response.split('\n').map(line => line.trim()).filter(line => line)
-    
-    let score = 0
-    let recommendation: AIMatchResult['recommendation'] = 'not_recommended'
-    let reasoning = ''
-    let pros: string[] = []
-    let cons: string[] = []
-
-    lines.forEach(line => {
-      if (line.startsWith('SCORE:')) {
-        const scoreStr = line.replace('SCORE:', '').trim()
-        score = Math.max(0, Math.min(1, parseFloat(scoreStr) || 0))
-      } else if (line.startsWith('RECOMMENDATION:')) {
-        const rec = line.replace('RECOMMENDATION:', '').trim()
-        if (['highly_recommended', 'recommended', 'consider', 'not_recommended'].includes(rec)) {
-          recommendation = rec as AIMatchResult['recommendation']
-        }
-      } else if (line.startsWith('REASONING:')) {
-        reasoning = line.replace('REASONING:', '').trim()
-      } else if (line.startsWith('PROS:')) {
-        const prosStr = line.replace('PROS:', '').trim()
-        pros = prosStr.split(',').map(p => p.trim()).filter(p => p)
-      } else if (line.startsWith('CONS:')) {
-        const consStr = line.replace('CONS:', '').trim()
-        cons = consStr.split(',').map(c => c.trim()).filter(c => c)
-      }
+      ],
+      temperature: 0.4,
+      max_tokens: 1000,
+      response_format: { type: "json_object" }
     })
 
-    return {
-      score,
-      reasoning: reasoning || 'לא סופק הסבר',
-      pros: pros.length > 0 ? pros : ['לא צוינו יתרונות'],
-      cons: cons.length > 0 ? cons : ['לא צוינו חסרונות'],
-      recommendation
+    const content = response.choices[0]?.message?.content
+    if (!content) {
+      throw new Error('אין תוכן בתשובה מ-GPT')
     }
+
+    const parsed = JSON.parse(content) as GPTMatchResponse
+    console.log(`✅ תשובה מ-GPT: ציון ${parsed.score}/10 - ${parsed.summary}`)
+    
+    return parsed
   } catch (error) {
-    console.error('שגיאה בפענוח תגובת GPT:', error)
-    return {
-      score: 0,
-      reasoning: 'שגיאה בפענוח התגובה מ-GPT',
-      pros: [],
-      cons: ['לא ניתן לנתח את התגובה'],
-      recommendation: 'not_recommended'
-    }
+    console.error('❌ שגיאה בפנייה ל-GPT:', error)
+    throw new Error(`שגיאה בניתוח ההתאמה: ${error}`)
   }
 }
 
-// בדיקת תקינות מפתח OpenAI
-export async function validateOpenAIKey(apiKey: string): Promise<boolean> {
-  try {
-    await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: 'בדיקה' }],
-        max_tokens: 5
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
+// יצירת זוגות פוטנציאליים עם ניקוד לוגי (כמו בקוד שלך)
+const createPotentialPairs = (males: DetailedCandidate[], females: DetailedCandidate[], logicalThreshold: number = 4) => {
+  const pairs = []
+  let totalPairs = 0
+  let hardFilterPassed = 0
+  let logicalScorePassed = 0
+
+  for (const male of males) {
+    for (const female of females) {
+      totalPairs++
+      
+      // שלב 1: סינון קשיח
+      if (applyHardFilters(male, female)) {
+        hardFilterPassed++
+        
+        // שלב 2: ניקוד לוגי
+        const logicalScore = calculateLogicalScore(male, female)
+        
+        // רק זוגות עם ציון גבוה ישלחו ל-GPT
+        if (logicalScore >= logicalThreshold) {
+          logicalScorePassed++
+          pairs.push({ 
+            male, 
+            female, 
+            logicalScore,
+            willSendToGPT: true
+          })
         }
       }
-    )
-    return true
-  } catch (error: any) {
-    console.error('בדיקת מפתח OpenAI נכשלה:', error)
-    return false
+    }
+  }
+
+  console.log(`📊 סטטיסטיקות סינון:`)
+  console.log(`   - סה"כ התאמות אפשריות: ${totalPairs}`)
+  console.log(`   - עברו סינון קשיח: ${hardFilterPassed}`)
+  console.log(`   - יישלחו ל-GPT (ציון ≥${logicalThreshold}): ${logicalScorePassed}`)
+  console.log(`   - חיסכון בעלות: ${((totalPairs - logicalScorePassed)/totalPairs*100).toFixed(1)}%`)
+
+  return pairs
+}
+
+// עיבוד זוגות במקביל (מהיר יותר!)
+const processPairsInBatches = async (pairs: any[], batchSize: number = 3): Promise<MatchProposal[]> => {
+  const matches: MatchProposal[] = []
+  
+  for (let i = 0; i < pairs.length; i += batchSize) {
+    const batch = pairs.slice(i, i + batchSize)
+    
+    // עיבוד הקבוצה במקביל
+    const batchPromises = batch.map(async (pair) => {
+      try {
+        const gptResponse = await analyzeMatchWithGPT(pair.male, pair.female)
+        
+        return {
+          id: `${pair.male.name}-${pair.female.name}-${Date.now()}`,
+          maleId: pair.male.id,
+          femaleName: pair.female.name,
+          maleName: pair.male.name,
+          femaleId: pair.female.id,
+          logicalScore: pair.logicalScore,
+          gptScore: gptResponse.score,
+          finalScore: (pair.logicalScore + gptResponse.score) / 2,
+          summary: gptResponse.summary,
+          strengths: gptResponse.strengths || [],
+          concerns: gptResponse.concerns || [],
+          status: 'pending' as const,
+          createdAt: new Date().toISOString(),
+          shadchanId: 'current-user'
+        } as MatchProposal
+      } catch (error) {
+        console.error(`❌ שגיאה בניתוח GPT לזוג ${pair.male.name}-${pair.female.name}:`, error)
+        return null
+      }
+    })
+    
+    const batchResults = await Promise.all(batchPromises)
+    const validResults = batchResults.filter(result => result !== null) as MatchProposal[]
+    matches.push(...validResults)
+    
+    console.log(`✅ עובד קבוצה ${Math.floor(i/batchSize) + 1}/${Math.ceil(pairs.length/batchSize)} - ${validResults.length} התאמות נוספו`)
+    
+    // השהייה קצרה בין קבוצות למניעת Rate Limiting
+    if (i + batchSize < pairs.length) {
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+  }
+  
+  return matches
+}
+
+// הפונקציה הראשית המשופרת - מבוססת על הגישה החכמה שלך
+export const generateMatches = async (
+  males: DetailedCandidate[], 
+  females: DetailedCandidate[],
+  logicalThreshold: number = 4,
+  maxMatches: number = 50
+): Promise<MatchProposal[]> => {
+  console.log(`🚀 מתחיל תהליך התאמה חכם`)
+  console.log(`📊 כמות בחורים: ${males.length}, בחורות: ${females.length}`)
+  console.log(`⚙️ סף לוגי: ${logicalThreshold}/10, מקסימום התאמות: ${maxMatches}`)
+
+  // שלב 1+2: יצירת זוגות פוטנציאליים עם סינון וניקוד
+  const potentialPairs = createPotentialPairs(males, females, logicalThreshold)
+  
+  if (potentialPairs.length === 0) {
+    console.log('❌ לא נמצאו זוגות העוברים את הסינון')
+    return []
+  }
+
+  // הגבלת כמות הזוגות למקסימום
+  const pairsToProcess = potentialPairs.slice(0, maxMatches)
+  console.log(`🎯 מעבד ${pairsToProcess.length} זוגות מתוך ${potentialPairs.length} פוטנציאליים`)
+
+  // שלב 3: עיבוד במקביל עם GPT
+  const matches = await processPairsInBatches(pairsToProcess, 3) // 3 בקשות במקביל
+
+  // מיון לפי ציון סופי
+  matches.sort((a, b) => b.finalScore - a.finalScore)
+
+  // סיכום סופי
+  console.log(`\n📈 סיכום תהליך ההתאמה החכם:`)
+  console.log(`   🎯 התאמות סופיות: ${matches.length}`)
+  console.log(`   🤖 נותחו ב-GPT: ${pairsToProcess.length}`)
+  console.log(`   💸 עלות משוערת: $${(pairsToProcess.length * 0.0001).toFixed(4)}`)
+  console.log(`   ⚡ זמן חסוך: ~${Math.round((males.length * females.length - pairsToProcess.length) * 2)} שניות`)
+
+  return matches
+}
+
+// פונקציה ליצירת אימייל התאמה (נשארת כמו שהיא)
+export const generateMatchEmail = async (match: MatchProposal): Promise<string> => {
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'אתה עוזר לשדכן לכתוב אימיילים מקצועיים להצעת שידוכים. כתוב באופן חם ומכבד.'
+        },
+        {
+          role: 'user',
+          content: `כתוב אימייל להצעת שידוך בין ${match.maleName} ל${match.femaleName}.
+          
+ציון ההתאמה: ${match.finalScore.toFixed(1)}/10
+סיכום: ${match.summary}
+נקודות חוזק: ${match.strengths.join(', ')}
+${match.concerns.length > 0 ? `נקודות לתשומת לב: ${match.concerns.join(', ')}` : ''}
+
+האימייל צריך להיות מקצועי ומעודד, תוך הדגשת נקודות החוזק של ההתאמה.`
+        }
+      ],
+      temperature: 0.7,
+      max_tokens: 500
+    })
+
+    return response.choices[0]?.message?.content || 'שגיאה ביצירת האימייל'
+  } catch (error) {
+    console.error('שגיאה ביצירת אימייל:', error)
+    throw error
   }
 }
 
-// יצירת הצעת מייל
-export async function generateProposalEmail(
-  boyName: string,
-  girlName: string,
-  matchReasoning: string,
-  apiKey: string
-): Promise<string> {
-  try {
-    const prompt = `
-צור הצעת מייל מקצועית ונעימה לשדכן שרוצה להציע שידוך.
+// פונקציה פשוטה ליצירת אימייל מהיר ללא GPT (חסכון)
+export const createQuickMatchEmail = (match: MatchProposal): string => {
+  return `שלום,
 
-פרטי ההתאמה:
-- שם הבחור: ${boyName}
-- שם הבחורה: ${girlName}
-- סיבת ההתאמה: ${matchReasoning}
+אני מבקש להציע בפניכם שידוך בין ${match.maleName} ל${match.femaleName}.
 
-כתב מייל קצר, מקצועי ומנומס שמציג את ההצעה באופן חיובי.
-החזר רק את תוכן המייל ללא נושא.
-`
+ציון התאמה: ${match.finalScore.toFixed(1)}/10
 
-    const response = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'system',
-            content: 'אתה עוזר בכתיבת מיילים מקצועיים לשדכנים'
-          },
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
-        max_tokens: 300,
-        temperature: 0.8
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    )
+סיכום ההתאמה: ${match.summary}
 
-    const data: OpenAIResponse = response.data
-    return data.choices[0]?.message?.content || 'שגיאה ביצירת המייל'
-  } catch (error) {
-    console.error('שגיאה ביצירת מייל:', error)
-    throw new Error('לא ניתן ליצור מייל אוטומטי')
-  }
+נקודות חוזק:
+${match.strengths.map(s => `• ${s}`).join('\n')}
+
+${match.concerns.length > 0 ? `נקודות לתשומת לב:\n${match.concerns.map(c => `• ${c}`).join('\n')}\n` : ''}
+
+אשמח לקבל את הסכמתכם להמשך התהליך.
+
+בברכה,
+המערכת`
 } 

@@ -35,26 +35,48 @@ export interface Candidate {
   [key: string]: any;
 }
 
-// הצעת שידוך
+// הצעת שידוך (משופרת עם ציונים מפורטים)
 export interface MatchProposal {
   id: string;
-  shadchan_id: string;
-  boy_row_id: string;
-  girl_row_id: string;
+  shadchan_id?: string;
+  shadchanId?: string; // תמיכה לשתי הוריאנטים
+  
+  // מזהי המועמדים
+  maleId: string;
+  femaleId: string;
+  maleName: string;
+  femaleName: string;
+  
+  // ציונים מפורטים - הגישה החדשה
+  logicalScore: number; // ציון לוגי 0-10 (שלב 2)
+  gptScore: number;     // ציון GPT 1-10 (שלב 3)
+  finalScore: number;   // ציון סופי (ממוצע)
+  
+  // פירוט ההתאמה
+  summary: string;      // סיכום מ-GPT
+  strengths: string[];  // נקודות חוזק
+  concerns: string[];   // נקודות לתשומת לב
+  
+  // ציונים ישנים (לתמיכה לאחור)
   match_score?: number;
   ai_reasoning?: string;
+  
+  // מצב וניהול
   status: 'pending' | 'approved' | 'rejected' | 'in_progress' | 'completed' | 'closed';
   notes?: string;
-  contact_attempts: number;
+  contact_attempts?: number;
   last_contact_date?: string;
-  meeting_scheduled: boolean;
+  meeting_scheduled?: boolean;
   meeting_date?: string;
-  created_at: string;
-  updated_at: string;
+  created_at?: string;
+  createdAt?: string; // תמיכה לשתי הוריאנטים
+  updated_at?: string;
   
   // נתונים מורחבים (יטענו בזמן אמת מהגיליון)
   boy_data?: Candidate;
   girl_data?: Candidate;
+  boy_row_id?: string;
+  girl_row_id?: string;
 }
 
 // דחייה
@@ -134,4 +156,74 @@ export interface UserSettings {
   shadchan: Shadchan;
   googleAuth: GoogleAuthStatus;
   sheetConfig?: SheetConfig;
+}
+
+// מועמד מפורט (מהגיליון עם כל השדות)
+export interface DetailedCandidate {
+  id: string;
+  name: string;
+  age: number;
+  
+  // נתונים בסיסיים
+  maritalStatus?: string;
+  religiousLevel?: string;
+  community?: string;
+  location?: string;
+  education?: string;
+  profession?: string;
+  
+  // העדפות
+  preferredAgeRange?: string;
+  lookingFor?: string;
+  importantToMe?: string;
+  dealBreakers?: string;
+  
+  // תחביבים וערכים
+  hobbies?: string;
+  valuesAndBeliefs?: string;
+  personalityType?: string;
+  lifeGoals?: string;
+  
+  // נתונים נוספים
+  height?: string;
+  appearance?: string;
+  familyBackground?: string;
+  economicStatus?: string;
+  healthStatus?: string;
+  
+  // מטאדטה
+  notes?: string;
+  status?: 'זמין' | 'בתהליך' | 'לא זמין';
+  lastUpdated?: string;
+  
+  // תמיכה בשדות דינמיים
+  [key: string]: any;
+}
+
+// סטטיסטיקות תהליך ההתאמה
+export interface MatchingStats {
+  totalPairs: number;
+  hardFilterPassed: number;
+  logicalScorePassed: number;
+  gptAnalyzed: number;
+  finalMatches: number;
+  costSaving: number; // אחוז החיסכון בעלות GPT
+  processingTime: number; // זמן עיבוד בשניות
+}
+
+// הגדרות תהליך ההתאמה
+export interface MatchingSettings {
+  logicalThreshold: number; // סף הניקוד הלוגי (ברירת מחדל: 4)
+  maxMatches: number;       // מקסימום התאמות (ברירת מחדל: 25)
+  hardFilters: {
+    maxAgeDifference: number; // פער גיל מקסימלי (ברירת מחדל: 5)
+    respectReligiousLevel: boolean;
+    respectCommunityPreference: boolean;
+    respectDealBreakers: boolean;
+  };
+  gptSettings: {
+    model: 'gpt-4o' | 'gpt-4o-mini' | 'gpt-4';
+    temperature: number;
+    maxTokens: number;
+  };
 } 
