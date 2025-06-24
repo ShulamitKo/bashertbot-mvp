@@ -3,8 +3,7 @@ import { MatchProposal } from '../types'
 import { 
   DetailedCandidate,
   applyHardFilters, 
-  calculateLogicalScore, 
-  passesLogicalThreshold 
+  calculateLogicalScore,  
 } from './google-sheets'
 
 const openai = new OpenAI({
