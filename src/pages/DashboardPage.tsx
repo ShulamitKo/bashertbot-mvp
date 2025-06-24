@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Heart, Users, Upload, Settings, TrendingUp, AlertTriangle, ArrowLeft, History, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { debugAuthStatus, refreshAuthToken } from '@/lib/auth'
 import { loadCandidatesFromSheet, DetailedCandidate } from '@/lib/google-sheets'
 import { generateMatches } from '@/lib/openai'
 import { MatchProposal } from '@/types'
@@ -12,12 +13,15 @@ import {
   getActiveSession, 
   createNewSession, 
   updateActiveSession, 
+  updateSpecificSession,
   hasUnprocessedMatches,
   moveMatchToProposals,
   getSessionHistory,
   getSessionStats,
   deleteSession,
-  MatchingSession
+  MatchingSession,
+  checkAuthConnection,
+  reset406ErrorCount
 } from '@/lib/sessions'
 
 interface DashboardPageProps {
@@ -32,6 +36,7 @@ type TabType = 'matches' | 'proposals' | 'import' | 'settings' | 'history'
 export const DashboardPage = ({ user }: DashboardPageProps) => {
   const [activeTab, setActiveTab] = useState<TabType>('matches')
   const [accessToken, setAccessToken] = useState<string | null>(null)
+  const [authStatus, setAuthStatus] = useState<'checking' | 'authenticated' | 'unauthenticated'>('checking')
   
   // State גלובלי לסריקת התאמות
   const [globalScanState, setGlobalScanState] = useState<{
@@ -43,6 +48,9 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
   })
 
   useEffect(() => {
+    // איפוס מונה שגיאות 406 בתחילת הטעינה
+    reset406ErrorCount()
+    
     // קבלת Access Token מSupabase
     const getAccessToken = async () => {
       const { data: { session } } = await supabase.auth.getSession()
@@ -50,7 +58,28 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
         setAccessToken(session.provider_token)
       }
     }
-    getAccessToken()
+    
+    // הוספת דיבוג לבדיקת סטטוס האימות
+    const initializeAuth = async () => {
+      console.log('🔍 מתחיל בדיקת אימות...')
+      
+      // בדיקת סשן נוכחי
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+      console.log('📋 Session:', session)
+      console.log('❌ Session Error:', sessionError)
+      
+      if (!session) {
+        console.error('❌ אין סשן פעיל! המשתמש לא מחובר')
+        setAuthStatus('unauthenticated')
+        return
+      }
+      
+      await debugAuthStatus()
+      await getAccessToken()
+      setAuthStatus('authenticated')
+    }
+    
+    initializeAuth()
   }, [])
 
   const tabs = [
@@ -60,6 +89,59 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
     { id: 'history' as TabType, label: 'היסטוריה', icon: History, count: 0 },
     { id: 'settings' as TabType, label: 'הגדרות', icon: Settings, count: 0 },
   ]
+
+  // אם עדיין בודק אימות
+  if (authStatus === 'checking') {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent mx-auto mb-4"></div>
+          <p className="text-gray-600">בודק סטטוס אימות...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // אם המשתמש לא מחובר
+  if (authStatus === 'unauthenticated') {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full mx-4">
+          <div className="text-center">
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <AlertTriangle className="w-8 h-8 text-red-600" />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">שגיאת אימות</h2>
+            <p className="text-gray-600 mb-6">
+              המערכת זיהתה שאינך מחובר/ת. זה עלול לקרות כאשר:
+            </p>
+            <ul className="text-right text-sm text-gray-500 mb-6 space-y-1">
+              <li>• הסשן פג תוקף</li>
+              <li>• הטוקן לא תקף</li>
+              <li>• יש בעיה בחיבור למערכת</li>
+            </ul>
+            <button
+              onClick={() => window.location.reload()}
+              className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors mb-3"
+            >
+              רענן דף וחזור למסך התחברות
+            </button>
+            <button
+              onClick={() => {
+                // נסה לנקות את הסשן ולחזור למסך התחברות
+                supabase.auth.signOut().then(() => {
+                  window.location.href = '/'
+                })
+              }}
+              className="w-full bg-gray-600 text-white py-2 px-4 rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              התנתק וחזור למסך התחברות
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   const renderTabContent = () => {
     switch (activeTab) {
@@ -91,12 +173,52 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
       <div className="container mx-auto px-4 py-6">
         {/* כותרת דשבורד */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
-            שלום {user?.name || 'שדכן'} 👋
-          </h1>
-          <p className="text-gray-600">
-            מוכנה לבצע התאמות חדשות היום?
-          </p>
+          <div className="flex justify-between items-start">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                שלום {user?.name || 'שדכן'} 👋
+              </h1>
+              <p className="text-gray-600">
+                מוכנה לבצע התאמות חדשות היום?
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                try {
+                  const refreshed = await refreshAuthToken()
+                  if (refreshed) {
+                    const successMsg = document.createElement('div')
+                    successMsg.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50'
+                    successMsg.textContent = '✅ החיבור רוענן בהצלחה'
+                    document.body.appendChild(successMsg)
+                    setTimeout(() => {
+                      if (document.body.contains(successMsg)) {
+                        document.body.removeChild(successMsg)
+                      }
+                    }, 3000)
+                  } else {
+                    throw new Error('לא הצלח לרענן')
+                  }
+                } catch (error) {
+                  const errorMsg = document.createElement('div')
+                  errorMsg.className = 'fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-50'
+                  errorMsg.textContent = '❌ שגיאה ברענון החיבור'
+                  document.body.appendChild(errorMsg)
+                  setTimeout(() => {
+                    if (document.body.contains(errorMsg)) {
+                      document.body.removeChild(errorMsg)
+                    }
+                  }, 3000)
+                }
+              }}
+              className="text-gray-600 border-gray-300 hover:bg-gray-50"
+              title="רענן חיבור למערכת"
+            >
+              🔄 רענן חיבור
+            </Button>
+          </div>
         </div>
 
         {/* סטטיסטיקות מהירות */}
@@ -239,7 +361,6 @@ const MatchesTab = ({
   const [initialLoading, setInitialLoading] = useState(true)
   const [candidates, setCandidates] = useState<{ males: DetailedCandidate[], females: DetailedCandidate[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [progress, setProgress] = useState<{ current: number, total: number, message: string } | null>(null)
   const [showNewScanWarning, setShowNewScanWarning] = useState(false)
   const [unprocessedCount, setUnprocessedCount] = useState(0)
 
@@ -279,167 +400,112 @@ const MatchesTab = ({
     await performNewScan()
   }
 
+  // פונקציה לביצוע סריקה חדשה
   const performNewScan = async () => {
-    setLoading(true)
-    setError(null)
-    
-    // עדכון ה-State הגלובלי
-    setGlobalScanState({
-      isScanning: true,
-      progress: { current: 0, total: 100, message: 'מכין את המערכת לסריקה...' }
-    })
-    
-    setProgress({ current: 0, total: 100, message: 'מכין את המערכת לסריקה...' })
-
     try {
-      // קבלת הגדרות מהמסד הנתונים
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        setError('לא מחובר למערכת')
-        setLoading(false)
-        return
+      setLoading(true)
+      setError(null)
+      
+      // הפעלת מצב סריקה עם אנימציות
+      setGlobalScanState({
+        isScanning: true,
+        progress: { current: 0, total: 100, message: 'מתחיל סריקה...' }
+      })
+      
+      // בדיקת חיבור למערכת לפני התחלה
+      console.log('🔍 בודק חיבור למערכת...')
+      setGlobalScanState({
+        isScanning: true,
+        progress: { current: 10, total: 100, message: 'בודק חיבור למערכת...' }
+      })
+      
+      const authCheck = await checkAuthConnection()
+      if (!authCheck.isConnected) {
+        throw new Error(authCheck.error || 'שגיאה בחיבור למערכת')
       }
+      console.log('✅ חיבור למערכת תקין')
 
-      const { data: settings } = await supabase
-        .from('shadchanim')
-        .select('google_sheet_id, openai_api_key')
-        .eq('auth_user_id', user.id)
-        .single()
-
-      const sheetId = settings?.google_sheet_id || localStorage.getItem('sheetId')
-      const openaiKey = settings?.openai_api_key || localStorage.getItem('openaiKey')
-
+      // טעינת נתוני מועמדים
+      console.log('טוען נתוני מועמדים...')
+      setGlobalScanState({
+        isScanning: true,
+        progress: { current: 30, total: 100, message: 'טוען נתוני מועמדים מהגיליון...' }
+      })
+      
+      // קבלת ה-sheetId מההגדרות או מ-localStorage
+      const sheetId = localStorage.getItem('sheetId')
       if (!sheetId) {
-        setError('נא להגדיר מזהה גיליון בטאב הגדרות')
-        setLoading(false)
-        return
-      }
-
-      if (!openaiKey) {
-        setError('נא להגדיר מפתח OpenAI בטאב הגדרות')
-        setLoading(false)
-        return
-      }
-
-      // וידוא שיש טוקן ו-openaiKey לא null
-      if (!accessToken || !openaiKey) {
-        setError('חסרים נתוני אימות')
-        setLoading(false)
-        return
-      }
-
-      // טעינת מועמדים מהגיליון עם עיכוב למניעת Rate Limiting
-      console.log('טוען מועמדים מהגיליון...')
-      const updateProgress = (current: number, message: string) => {
-        const progressData = { current, total: 100, message }
-        setProgress(progressData)
-        setGlobalScanState({ isScanning: true, progress: progressData })
+        throw new Error('לא נמצא מזהה גיליון. אנא הגדר את הגיליון בטאב ההגדרות.')
       }
       
-      updateProgress(5, '🔗 מתחבר לגיליון Google Sheets...')
+      const candidatesData = await loadCandidatesFromSheet(accessToken!, sheetId)
       
-      // המתנה קצרה למניעת Rate Limiting
-      await new Promise(resolve => setTimeout(resolve, 800))
-      
-      updateProgress(15, '📊 טוען נתוני מועמדים...')
-      await new Promise(resolve => setTimeout(resolve, 600))
-      
-      const candidatesData = await loadCandidatesFromSheet(accessToken, sheetId)
-      setCandidates(candidatesData)
-
-      if (!candidatesData || !candidatesData.males || !candidatesData.females) {
-        setError('שגיאה בטעינת נתוני המועמדים')
-        setLoading(false)
-        return
-      }
-
       if (candidatesData.males.length === 0 || candidatesData.females.length === 0) {
-        setError('הגיליון לא מכיל מועמדים בשני הטאבים (בנים ובנות)')
-        setLoading(false)
-        return
+        throw new Error('לא נמצאו מועמדים בגיליון')
       }
-
-      console.log(`נטענו ${candidatesData.males.length} בנים ו-${candidatesData.females.length} בנות`)
-      updateProgress(35, `👥 נטענו ${candidatesData.males.length} בנים ו-${candidatesData.females.length} בנות`)
-      await new Promise(resolve => setTimeout(resolve, 800))
-      
-      updateProgress(50, '🔍 מנתח פרופילי מועמדים...')
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      
-      updateProgress(70, '🤖 יוצר התאמות חכמות עם AI...')
 
       // יצירת התאמות עם AI
       console.log('יוצר התאמות עם AI...')
+      setGlobalScanState({
+        isScanning: true,
+        progress: { current: 60, total: 100, message: 'מנתח מועמדים עם בינה מלאכותית...' }
+      })
+      
       const generatedMatches = await generateMatches(
         candidatesData.males,
         candidatesData.females,
-        4, // סף לוגי - רק התאמות איכותיות
-        10 // מקסימום 10 התאמות - כל ההתאמות הטובות
+        5, // סף לוגי - רק התאמות איכותיות
+        10 // יוחזרו 10 הטובות ביותר אחרי ניתוח GPT של כולם
       )
 
-      console.log(`✅ נוצרו ${generatedMatches.length} התאמות`)
-      
-      updateProgress(85, `💾 שומר ${generatedMatches.length} התאמות חדשות...`)
-      await new Promise(resolve => setTimeout(resolve, 600))
+      if (generatedMatches.length === 0) {
+        setMatches([])
+        setLoading(false)
+        setGlobalScanState({ isScanning: false, progress: null })
+        return
+      }
       
       // יצירת סשן חדש ושמירת ההתאמות
+      setGlobalScanState({
+        isScanning: true,
+        progress: { current: 90, total: 100, message: 'שומר התאמות במערכת...' }
+      })
+      
       await createNewSession()
       await updateActiveSession(generatedMatches)
       
-      updateProgress(95, '🔄 מסיים עיבוד...')
-      await new Promise(resolve => setTimeout(resolve, 400))
+      // סיום מוצלח
+      setGlobalScanState({
+        isScanning: true,
+        progress: { current: 100, total: 100, message: 'הושלם בהצלחה! ✨' }
+      })
       
       setMatches(generatedMatches)
-      updateProgress(100, '🎉 הושלם בהצלחה! נוצרו התאמות חדשות')
-      
-      // הודעת הצלחה ויזואלית
-      setTimeout(() => {
-        const successNotification = document.createElement('div')
-        successNotification.className = 'fixed top-4 right-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white px-6 py-4 rounded-lg shadow-xl z-50 animate-bounce'
-        successNotification.innerHTML = `
-          <div class="flex items-center gap-3">
-            <div class="text-2xl">🎉</div>
-            <div>
-              <div class="font-bold">סריקה הושלמה!</div>
-              <div class="text-sm opacity-90">נוצרו ${generatedMatches.length} התאמות חדשות</div>
-            </div>
-          </div>
-        `
-        document.body.appendChild(successNotification)
-        setTimeout(() => {
-          if (document.body.contains(successNotification)) {
-            document.body.removeChild(successNotification)
-          }
-        }, 5000)
-      }, 1000)
-
-    } catch (error: any) {
-      console.error('שגיאה ביצירת התאמות:', error)
-      
-      // הודעת שגיאה מפורטת יותר
-      let errorMessage = 'שגיאה לא ידועה'
-      if (error.message?.includes('429')) {
-        errorMessage = 'יותר מדי בקשות ל-Google Sheets. נסה שוב בעוד דקה'
-      } else if (error.message?.includes('Failed to fetch')) {
-        errorMessage = 'שגיאה בטעינת נתונים מ-Google Sheets. בדוק את החיבור לאינטרנט'
-      } else if (error.message) {
-        errorMessage = error.message
-      }
-      
-      setError(errorMessage)
-    } finally {
       setLoading(false)
       
-      // הצגת הודעת הצלחה למשך זמן ארוך יותר אם הסריקה הצליחה
-      if (progress?.current === 100) {
+      console.log(`✅ הושלם! נוצרו ${generatedMatches.length} התאמות`)
+      
+      // איפוס מצב הסריקה אחרי הצגת הודעת הצלחה
+      setTimeout(() => {
+        setGlobalScanState({ isScanning: false, progress: null })
+      }, 2000)
+      
+    } catch (error: any) {
+      console.error('שגיאה ביצירת התאמות:', error)
+      setError(`שגיאה ביצירת התאמות: ${error.message}`)
+      setLoading(false)
+      
+      // איפוס מצב הסריקה בשגיאה
+      setGlobalScanState({ isScanning: false, progress: null })
+      
+      // הוספת עיכוב לפני איפוס השגיאה (למשתמש לראות)
+      if (error.message?.includes('Rate limit')) {
         setTimeout(() => {
-          setProgress(null)
-          setGlobalScanState({ isScanning: false, progress: null })
-        }, 4000) // 4 שניות להודעת הצלחה
+          setError(null)
+        }, 5000) // 5 שניות לשגיאות rate limit
       } else {
         setTimeout(() => {
-          setProgress(null)
-          setGlobalScanState({ isScanning: false, progress: null })
+          setError(null)
         }, 2000) // 2 שניות לשגיאות
       }
     }
@@ -518,7 +584,7 @@ const MatchesTab = ({
       </div>
 
       {/* Progress Bar מרשים עם אנימציית טעינה */}
-      {progress && (
+      {globalScanState.progress && (
         <div className="mb-6 bg-gradient-to-r from-blue-50 to-purple-50 border-2 border-blue-200 rounded-xl p-6 shadow-lg">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-4">
@@ -526,24 +592,24 @@ const MatchesTab = ({
                 <div className="animate-spin rounded-full h-6 w-6 border-3 border-blue-600 border-t-transparent"></div>
                 <div className="absolute inset-0 animate-ping rounded-full h-6 w-6 border border-blue-400 opacity-20"></div>
               </div>
-              <span className="text-lg font-semibold text-blue-800">{progress.message}</span>
+              <span className="text-lg font-semibold text-blue-800">{globalScanState.progress.message}</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-blue-600">{progress.current}%</span>
-              <span className="text-xs text-blue-500">/ {progress.total}%</span>
+              <span className="text-sm font-medium text-blue-600">{globalScanState.progress.current}%</span>
+              <span className="text-xs text-blue-500">/ {globalScanState.progress.total}%</span>
             </div>
           </div>
           <div className="w-full bg-blue-200 rounded-full h-3 overflow-hidden shadow-inner">
             <div 
               className="bg-gradient-to-r from-blue-500 to-purple-600 h-3 rounded-full transition-all duration-700 ease-out relative overflow-hidden"
-              style={{ width: `${(progress.current / progress.total) * 100}%` }}
+              style={{ width: `${(globalScanState.progress.current / globalScanState.progress.total) * 100}%` }}
             >
               <div className="absolute inset-0 scan-progress-bar"></div>
               <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30 progress-wave"></div>
               <div className="absolute right-0 top-0 h-full w-1 bg-white opacity-80 animate-pulse"></div>
             </div>
           </div>
-          {progress.current === 100 && (
+          {globalScanState.progress.current === 100 && (
             <div className="mt-3 text-center">
               <span className="text-green-600 font-medium animate-bounce">✨ סיום בהצלחה! ✨</span>
             </div>
@@ -560,12 +626,79 @@ const MatchesTab = ({
         </div>
       )}
 
-      {loading && progress && progress.current === 0 ? (
+      {loading && globalScanState.progress && globalScanState.progress.current === 0 ? (
         <LoadingSpinner message="מכין את המערכת..." />
       ) : matches && matches.length > 0 ? (
         <div className="space-y-6">
           {matches.map((match) => (
-            <MatchCard key={match.id} match={match} />
+            <MatchCard 
+              key={match.id} 
+              match={match} 
+              matches={matches}
+                              onStatusUpdate={async (matchId, newStatus) => {
+                  try {
+                    // שימוש בפונקציה המרכזית לעדכון סטטוס
+                    const updatedMatches = await updateMatchStatus(matches, matchId, newStatus)
+                    setMatches(updatedMatches)
+                    
+                    // הודעת הצלחה לעדכון הממשק
+                    console.log(`✅ עודכן סטטוס הצעה ${matchId} ל-${newStatus}`)
+                    
+                    // אם ההצעה אושרה, תוצג הודעה נוספת
+                    if (newStatus === 'approved') {
+                      setTimeout(() => {
+                        const infoNotification = document.createElement('div')
+                        infoNotification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50'
+                        infoNotification.textContent = '✅ ההצעה אושרה והועברה לטאב "הצעות פעילות"'
+                        document.body.appendChild(infoNotification)
+                        
+                        setTimeout(() => {
+                          if (document.body.contains(infoNotification)) {
+                            document.body.removeChild(infoNotification)
+                          }
+                        }, 4000)
+                      }, 1000)
+                    }
+                  } catch (error) {
+                    console.error('שגיאה בעדכון סטטוס בטאב התאמות חדשות:', error)
+                    
+                    // הודעת שגיאה למשתמש בהתאם לסוג השגיאה
+                    let errorMessage = '❌ שגיאה בעדכון הסטטוס. נסה שוב.'
+                    
+                    if (error instanceof Error) {
+                      if (error.message.includes('אימות')) {
+                        errorMessage = '🔐 שגיאת אימות - אנא רענן את הדף והתחבר מחדש'
+                      } else if (error.message.includes('כבר קיימת') || error.message.includes('כבר מאושרת')) {
+                        // במקרה של הצעה קיימת, זה לא באמת שגיאה - זה מצב תקין
+                        const successNotification = document.createElement('div')
+                        successNotification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50'
+                        successNotification.textContent = '✅ ההצעה כבר מאושרת - היא נמצאת בטאב "הצעות פעילות"'
+                        document.body.appendChild(successNotification)
+                        
+                        setTimeout(() => {
+                          if (document.body.contains(successNotification)) {
+                            document.body.removeChild(successNotification)
+                          }
+                        }, 4000)
+                        return // לא נציג הודעת שגיאה
+                      } else if (error.message.includes('הרשאות')) {
+                        errorMessage = '🔐 שגיאת הרשאות - אנא רענן את הדף'
+                      }
+                    }
+                    
+                    const errorNotification = document.createElement('div')
+                    errorNotification.className = 'fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-50'
+                    errorNotification.textContent = errorMessage
+                    document.body.appendChild(errorNotification)
+                    
+                    setTimeout(() => {
+                      if (document.body.contains(errorNotification)) {
+                        document.body.removeChild(errorNotification)
+                      }
+                    }, 5000)
+                  }
+                }}
+            />
           ))}
         </div>
       ) : (
@@ -632,9 +765,8 @@ const MatchesTab = ({
 }
 
 // פונקציית עזר לעדכון סטטוס התאמה
-const updateMatchStatus = async (matchId: string, newStatus: 'approved' | 'rejected') => {
-  const currentMatches = JSON.parse(localStorage.getItem('currentMatches') || '[]') as MatchProposal[]
-  const updatedMatches = currentMatches.map(m => 
+const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newStatus: 'approved' | 'rejected') => {
+  const updatedMatches = matches.map(m => 
     m.id === matchId ? { ...m, status: newStatus } : m
   )
   
@@ -656,18 +788,152 @@ const updateMatchStatus = async (matchId: string, newStatus: 'approved' | 'rejec
 }
 
 // רכיב טאב הצעות
-const ProposalsTab = () => (
-  <div>
-    <h2 className="text-xl font-semibold mb-4">הצעות פעילות</h2>
-    <div className="text-center py-12">
-      <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-      <h3 className="text-lg font-medium text-gray-900 mb-2">אין הצעות פעילות</h3>
-      <p className="text-gray-600">
-        כאן יופיעו ההצעות שאישרת ונמצאות בתהליך מעקב
-      </p>
+const ProposalsTab = () => {
+  const [proposals, setProposals] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    loadActiveProposals()
+  }, [])
+
+  const loadActiveProposals = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        console.error('משתמש לא מחובר')
+        return
+      }
+
+      const { data: shadchan } = await supabase
+        .from('shadchanim')
+        .select('id')
+        .eq('auth_user_id', user.id)
+        .single()
+
+      if (!shadchan) {
+        console.error('לא נמצא פרופיל שדכן')
+        return
+      }
+
+      const { data: activeProposals, error } = await supabase
+        .from('match_proposals')
+        .select('*')
+        .eq('shadchan_id', shadchan.id)
+        .in('status', ['approved', 'in_progress'])
+        .order('created_at', { ascending: false })
+
+      if (error) throw error
+
+      setProposals(activeProposals || [])
+      console.log('טעון', activeProposals?.length || 0, 'הצעות פעילות')
+    } catch (error) {
+      console.error('שגיאה בטעינת הצעות פעילות:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (loading) {
+    return <LoadingSpinner message="טוען הצעות פעילות..." />
+  }
+
+  return (
+    <div>
+      <h2 className="text-xl font-semibold mb-4">הצעות פעילות</h2>
+      
+      {proposals.length === 0 ? (
+        <div className="text-center py-12">
+          <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">אין הצעות פעילות</h3>
+          <p className="text-gray-600">
+            כאן יופיעו ההצעות שאישרת ונמצאות בתהליך מעקב.<br/>
+            אשר הצעות מהטאב "התאמות חדשות" כדי לראות אותן כאן.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {proposals.map((proposal) => (
+            <Card key={proposal.id} className="p-4 border-r-4 border-r-green-500">
+              <div className="flex justify-between items-start mb-3">
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-green-800">
+                    הצעה פעילה #{proposal.id.slice(-8)}
+                  </h3>
+                  <div className="flex gap-4 mt-2 text-sm text-gray-600">
+                    <span className="bg-green-100 px-2 py-1 rounded-full">
+                      ✅ מאושר
+                    </span>
+                    <span className="bg-blue-100 px-2 py-1 rounded-full">
+                      🎯 ציון: {proposal.match_score ? (proposal.match_score * 10).toFixed(1) : 'N/A'}/10
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      נוצר: {new Date(proposal.created_at).toLocaleDateString('he-IL')}
+                    </span>
+                  </div>
+                </div>
+                <div className="text-left">
+                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                    proposal.status === 'approved' ? 'bg-green-100 text-green-800' :
+                    proposal.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
+                    'bg-gray-100 text-gray-800'
+                  }`}>
+                    {proposal.status === 'approved' ? 'מאושר' : 
+                     proposal.status === 'in_progress' ? 'בתהליך' : proposal.status}
+                  </span>
+                </div>
+              </div>
+              
+              <div className="mb-3">
+                <p className="text-gray-700 font-medium mb-2">📋 מזהי המועמדים:</p>
+                <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <span className="font-medium">בחור:</span> {proposal.boy_row_id}
+                    </div>
+                    <div>
+                      <span className="font-medium">בחורה:</span> {proposal.girl_row_id}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {proposal.ai_reasoning && (
+                <div className="mb-3">
+                  <p className="text-gray-700 font-medium mb-2">🤖 הסבר AI:</p>
+                  <p className="text-sm text-gray-600 bg-blue-50 p-3 rounded">{proposal.ai_reasoning}</p>
+                </div>
+              )}
+
+              <div className="flex gap-3 mt-4">
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  className="border-blue-500 text-blue-600 hover:bg-blue-50"
+                >
+                  📞 צור קשר
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  className="border-orange-500 text-orange-600 hover:bg-orange-50"
+                >
+                  📝 עדכן סטטוס
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  className="border-gray-500 text-gray-600 hover:bg-gray-50"
+                >
+                  📊 הוספת הערות
+                </Button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
-  </div>
-)
+  )
+}
 
 // רכיב טאב היסטוריה
 const HistoryTab = () => {
@@ -765,7 +1031,90 @@ const HistoryTab = () => {
         {/* הצגת התאמות מהסשן */}
         <div className="space-y-6">
           {selectedSession.session_data.map((match) => (
-            <MatchCard key={match.id} match={match} />
+            <MatchCard 
+              key={match.id} 
+              match={match} 
+              matches={selectedSession.session_data}
+                             onStatusUpdate={async (matchId, newStatus) => {
+                 try {
+                   // עדכון local state מיידי
+                   const updatedMatches = selectedSession.session_data.map(m => 
+                     m.id === matchId ? { ...m, status: newStatus } : m
+                   )
+                   
+                   // עדכון הסשן המוצג
+                   setSelectedSession({
+                     ...selectedSession,
+                     session_data: updatedMatches
+                   })
+                   
+                   // עדכון הסשן בהיסטוריה
+                   await updateSpecificSession(selectedSession.id, updatedMatches)
+                   
+                   // אם אושר - העברה להצעות פעילות
+                   if (newStatus === 'approved') {
+                     const approvedMatch = updatedMatches.find(m => m.id === matchId)
+                     if (approvedMatch) {
+                       await moveMatchToProposals(approvedMatch)
+                     }
+                   }
+                   
+                   // הודעת הצלחה
+                   console.log(`✅ עודכן סטטוס הצעה ${matchId} ל-${newStatus} בהיסטוריה`)
+                   
+                   // אם ההצעה אושרה, תוצג הודעה נוספת
+                   if (newStatus === 'approved') {
+                     setTimeout(() => {
+                       const infoNotification = document.createElement('div')
+                       infoNotification.className = 'fixed top-4 right-4 bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg z-50'
+                       infoNotification.textContent = '💡 עבור לטאב "הצעות פעילות" לראות את ההצעה המאושרת'
+                       document.body.appendChild(infoNotification)
+                       
+                       setTimeout(() => {
+                         if (document.body.contains(infoNotification)) {
+                           document.body.removeChild(infoNotification)
+                         }
+                       }, 4000)
+                     }, 1000)
+                   }
+                 } catch (error) {
+                   console.error('שגיאה בעדכון סטטוס בהיסטוריה:', error)
+                   
+                   // החזרת הסטייט המקומי במקרה של שגיאה
+                   const originalMatch = selectedSession.session_data.find(m => m.id === matchId)
+                   setSelectedSession({
+                     ...selectedSession,
+                     session_data: selectedSession.session_data.map(m => 
+                       m.id === matchId ? { ...m, status: originalMatch?.status || 'pending' } : m
+                     )
+                   })
+                   
+                   // הודעת שגיאה למשתמש בהתאם לסוג השגיאה
+                   let errorMessage = '❌ שגיאה בעדכון הסטטוס בהיסטוריה. נסה שוב.'
+                   
+                   if (error instanceof Error) {
+                     if (error.message.includes('אימות')) {
+                       errorMessage = '🔐 שגיאת אימות - אנא רענן את הדף והתחבר מחדש'
+                     } else if (error.message.includes('כבר קיימת')) {
+                       errorMessage = '💡 ההצעה כבר קיימת במערכת - עבור לטאב "הצעות פעילות"'
+                     } else if (error.message.includes('הרשאות')) {
+                       errorMessage = '🔐 שגיאת הרשאות - אנא רענן את הדף'
+                     }
+                   }
+                   
+                   const errorNotification = document.createElement('div')
+                   errorNotification.className = 'fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-50'
+                   errorNotification.textContent = errorMessage
+                   document.body.appendChild(errorNotification)
+                   
+                   setTimeout(() => {
+                     if (document.body.contains(errorNotification)) {
+                       document.body.removeChild(errorNotification)
+                     }
+                   }, 5000)
+                 }
+               }}
+            />
           ))}
         </div>
       </div>
@@ -862,7 +1211,6 @@ const ImportTab = ({ accessToken }: { accessToken: string | null }) => {
   const [loading, setLoading] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
   const [candidates, setCandidates] = useState<{ males: DetailedCandidate[], females: DetailedCandidate[] } | null>(null)
-  const [progress, setProgress] = useState<{ current: number, total: number, message: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   // טעינת נתונים שמורים בעת העלאת הקומפוננט
@@ -894,7 +1242,6 @@ const ImportTab = ({ accessToken }: { accessToken: string | null }) => {
 
     setLoading(true)
     setError(null)
-    setProgress({ current: 0, total: 100, message: 'מכין חיבור לגיליון...' })
 
     try {
       // קבלת הגדרות מהמסד הנתונים
@@ -903,9 +1250,6 @@ const ImportTab = ({ accessToken }: { accessToken: string | null }) => {
         setError('לא מחובר למערכת')
         return
       }
-
-      setProgress({ current: 20, total: 100, message: 'מקבל הגדרות...' })
-      await new Promise(resolve => setTimeout(resolve, 300))
 
       const { data: settings } = await supabase
         .from('shadchanim')
@@ -919,20 +1263,12 @@ const ImportTab = ({ accessToken }: { accessToken: string | null }) => {
         return
       }
 
-      setProgress({ current: 40, total: 100, message: 'מתחבר לגיליון Google...' })
-      await new Promise(resolve => setTimeout(resolve, 500))
-
-      setProgress({ current: 60, total: 100, message: 'טוען נתוני מועמדים...' })
       const data = await loadCandidatesFromSheet(accessToken, sheetId)
-      
-      setProgress({ current: 90, total: 100, message: 'שומר נתונים...' })
-      await new Promise(resolve => setTimeout(resolve, 300))
       
       // שמירת הנתונים ב-localStorage
       localStorage.setItem('importedCandidates', JSON.stringify(data))
       
       setCandidates(data)
-      setProgress({ current: 100, total: 100, message: 'הושלם בהצלחה! ✅' })
       
       console.log(`✅ נטענו ${data.males?.length || 0} בנים ו-${data.females?.length || 0} בנות`)
       
@@ -941,7 +1277,6 @@ const ImportTab = ({ accessToken }: { accessToken: string | null }) => {
       setError(`שגיאה בטעינת המועמדים: ${error.message}`)
     } finally {
       setLoading(false)
-      setTimeout(() => setProgress(null), 2000)
     }
   }
 
@@ -976,24 +1311,7 @@ const ImportTab = ({ accessToken }: { accessToken: string | null }) => {
           </button>
         </div>
 
-        {/* Progress Bar */}
-        {progress && (
-          <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-3">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                <span className="text-sm font-medium text-blue-700">{progress.message}</span>
-              </div>
-              <span className="text-sm text-blue-600">{progress.current}/{progress.total}</span>
-            </div>
-            <div className="w-full bg-blue-200 rounded-full h-2">
-              <div 
-                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${(progress.current / progress.total) * 100}%` }}
-              />
-            </div>
-          </div>
-        )}
+
 
         {/* הודעת שגיאה */}
         {error && (
@@ -1289,79 +1607,571 @@ const SettingsTab = ({ accessToken }: { accessToken: string | null }) => {
 }
 
 // רכיב להצגת הצעת התאמה משופרת
-const MatchCard = ({ match }: { match: MatchProposal }) => {
+const MatchCard = ({ match, matches, onStatusUpdate }: { 
+  match: MatchProposal, 
+  matches: MatchProposal[],
+  onStatusUpdate?: (matchId: string, newStatus: 'approved' | 'rejected') => void 
+}) => {
+  const [showProfilesModal, setShowProfilesModal] = useState(false)
+  const [candidatesData, setCandidatesData] = useState<{
+    maleProfile: any | null
+    femaleProfile: any | null
+  }>({ maleProfile: null, femaleProfile: null })
+  const [isProcessing, setIsProcessing] = useState(false)
+
+  // טעינת נתוני המועמדים המלאים
+  const loadCandidateProfiles = async () => {
+    try {
+      console.log('נתוני הצעה מלאים:', match)
+      console.log('boy_data:', match.boy_data)
+      console.log('girl_data:', match.girl_data)
+      
+      setCandidatesData({
+        maleProfile: match.boy_data || null,
+        femaleProfile: match.girl_data || null
+      })
+      
+      setShowProfilesModal(true)
+    } catch (error) {
+      console.error('שגיאה בטעינת פרופילי המועמדים:', error)
+    }
+  }
+
+  // טיפול באישור הצעה
+  const handleApprove = async () => {
+    if (isProcessing) return
+    
+    const confirmApprove = window.confirm(
+      `האם אתה בטוח שברצונך לאשר את ההצעה בין ${match.maleName} ו-${match.femaleName}?\n\nלאחר האישור, ההצעה תועבר לטאב "הצעות פעילות" למעקב.`
+    )
+    
+    if (!confirmApprove) return
+    
+    setIsProcessing(true)
+    try {
+      // הודעת התחלה
+      const processingNotification = document.createElement('div')
+      processingNotification.className = 'fixed top-4 right-4 bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg z-50'
+      processingNotification.textContent = 'מעבד אישור הצעה...'
+      document.body.appendChild(processingNotification)
+      
+      // עדכון הסטטוס - נקרא רק ל-onStatusUpdate שיטפל בהכל
+      if (onStatusUpdate) {
+        await onStatusUpdate(match.id, 'approved')
+      }
+      
+      // הודעת הצלחה
+      document.body.removeChild(processingNotification)
+      const successNotification = document.createElement('div')
+      successNotification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50'
+      successNotification.textContent = '✅ ההצעה אושרה ונשמרה בהצלחה!'
+      document.body.appendChild(successNotification)
+      
+      setTimeout(() => {
+        if (document.body.contains(successNotification)) {
+          document.body.removeChild(successNotification)
+        }
+      }, 3000)
+      
+    } catch (error) {
+      console.error('שגיאה באישור הצעה:', error)
+      
+      // הסרת הודעת עיבוד אם קיימת
+      const existingProcessing = document.querySelector('.fixed.top-4.right-4.bg-blue-500')
+      if (existingProcessing && document.body.contains(existingProcessing)) {
+        document.body.removeChild(existingProcessing)
+      }
+      
+      // טיפול מיוחד במקרה של הצעה קיימת
+      if (error instanceof Error && (error.message.includes('כבר קיימת') || error.message.includes('כבר מאושרת'))) {
+        const infoNotification = document.createElement('div')
+        infoNotification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50'
+        infoNotification.textContent = '✅ ההצעה כבר מאושרת - היא נמצאת בטאב "הצעות פעילות"'
+        document.body.appendChild(infoNotification)
+        
+        setTimeout(() => {
+          if (document.body.contains(infoNotification)) {
+            document.body.removeChild(infoNotification)
+          }
+        }, 4000)
+      } else {
+        // הודעת שגיאה רגילה
+        const errorNotification = document.createElement('div')
+        errorNotification.className = 'fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-50'
+        errorNotification.textContent = '❌ שגיאה באישור ההצעה. נסה שוב.'
+        document.body.appendChild(errorNotification)
+        
+        setTimeout(() => {
+          if (document.body.contains(errorNotification)) {
+            document.body.removeChild(errorNotification)
+          }
+        }, 3000)
+      }
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  // טיפול בדחיית הצעה
+  const handleReject = async () => {
+    if (isProcessing) return
+    
+    const confirmReject = window.confirm(
+      `האם אתה בטוח שברצונך לדחות את ההצעה בין ${match.maleName} ו-${match.femaleName}?\n\nהסיבה לדחיה תירשם ותועזור לשפר התאמות עתידיות.`
+    )
+    
+    if (!confirmReject) return
+    
+    setIsProcessing(true)
+    try {
+      // הודעת התחלה
+      const processingNotification = document.createElement('div')
+      processingNotification.className = 'fixed top-4 right-4 bg-orange-500 text-white px-4 py-2 rounded-lg shadow-lg z-50'
+      processingNotification.textContent = 'מעבד דחיית הצעה...'
+      document.body.appendChild(processingNotification)
+      
+      // עדכון הסטטוס - נקרא רק ל-onStatusUpdate שיטפל בהכל
+      if (onStatusUpdate) {
+        await onStatusUpdate(match.id, 'rejected')
+      }
+      
+      // הודעת הצלחה
+      document.body.removeChild(processingNotification)
+      const successNotification = document.createElement('div')
+      successNotification.className = 'fixed top-4 right-4 bg-orange-500 text-white px-4 py-2 rounded-lg shadow-lg z-50'
+      successNotification.textContent = '🚫 ההצעה נדחתה ונשמרה להיסטוריה'
+      document.body.appendChild(successNotification)
+      
+      setTimeout(() => {
+        if (document.body.contains(successNotification)) {
+          document.body.removeChild(successNotification)
+        }
+      }, 3000)
+      
+    } catch (error) {
+      console.error('שגיאה בדחיית הצעה:', error)
+      
+      // הודעת שגיאה
+      const errorNotification = document.createElement('div')
+      errorNotification.className = 'fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-50'
+      errorNotification.textContent = '❌ שגיאה בדחיית ההצעה. נסה שוב.'
+      document.body.appendChild(errorNotification)
+      
+      setTimeout(() => {
+        if (document.body.contains(errorNotification)) {
+          document.body.removeChild(errorNotification)
+        }
+      }, 3000)
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
   return (
-    <Card className="p-4 border-r-4 border-r-blue-500">
-      <div className="flex justify-between items-start mb-3">
-        <div className="flex-1">
-          <h3 className="text-lg font-semibold text-blue-800">
-            {match.maleName} ← → {match.femaleName}
-          </h3>
-          <div className="flex gap-4 mt-2 text-sm text-gray-600">
-            <span className="bg-green-100 px-2 py-1 rounded-full">
-              🧮 לוגי: {match.logicalScore.toFixed(1)}/10
-            </span>
-            <span className="bg-purple-100 px-2 py-1 rounded-full">
-              🤖 GPT: {match.gptScore}/10
-            </span>
-            <span className="bg-blue-100 px-2 py-1 rounded-full font-medium">
-              🎯 סופי: {match.finalScore.toFixed(1)}/10
+    <>
+      <Card className="p-4 border-r-4 border-r-blue-500">
+        <div className="flex justify-between items-start mb-3">
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold text-blue-800">
+              {match.maleName} {match.boy_data?.age && `(${match.boy_data.age})`} ← → {match.femaleName} {match.girl_data?.age && `(${match.girl_data.age})`}
+            </h3>
+            <div className="flex gap-4 mt-2 text-sm text-gray-600">
+              <span className="bg-green-100 px-2 py-1 rounded-full">
+                🧮 לוגי: {match.logicalScore.toFixed(1)}/10
+              </span>
+              <span className="bg-purple-100 px-2 py-1 rounded-full">
+                🤖 GPT: {match.gptScore}/10
+              </span>
+              <span className="bg-blue-100 px-2 py-1 rounded-full font-medium">
+                🎯 סופי: {match.finalScore.toFixed(1)}/10
+              </span>
+            </div>
+          </div>
+          <div className="text-left">
+            <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+              match.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+              match.status === 'approved' ? 'bg-green-100 text-green-800' :
+              'bg-red-100 text-red-800'
+            }`}>
+              {match.status === 'pending' ? 'ממתין' : 
+               match.status === 'approved' ? 'אושר' : 'נדחה'}
             </span>
           </div>
         </div>
-        <div className="text-left">
-          <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-            match.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-            match.status === 'approved' ? 'bg-green-100 text-green-800' :
-            'bg-red-100 text-red-800'
-          }`}>
-            {match.status === 'pending' ? 'ממתין' : 
-             match.status === 'approved' ? 'אושר' : 'נדחה'}
-          </span>
-        </div>
-      </div>
-      
-      <div className="mb-3">
-        <p className="text-gray-700 font-medium mb-2">💭 סיכום ההתאמה:</p>
-        <p className="text-sm text-gray-600 bg-gray-50 p-3 rounded">{match.summary}</p>
-      </div>
-
-      {match.strengths.length > 0 && (
+        
         <div className="mb-3">
-          <p className="text-green-700 font-medium mb-2">✅ נקודות חוזק:</p>
-          <ul className="text-sm text-green-600">
-            {match.strengths.map((strength: string, i: number) => (
-              <li key={i} className="flex items-start gap-2">
-                <span>•</span>
-                <span>{strength}</span>
-              </li>
-            ))}
-          </ul>
+          <p className="text-gray-700 font-medium mb-2">💭 סיכום ההתאמה:</p>
+          <p className="text-sm text-gray-600 bg-gray-50 p-3 rounded">{match.summary}</p>
         </div>
-      )}
 
-      {match.concerns.length > 0 && (
-        <div className="mb-3">
-          <p className="text-orange-700 font-medium mb-2">⚠️ נקודות לתשומת לב:</p>
-          <ul className="text-sm text-orange-600">
-            {match.concerns.map((concern: string, i: number) => (
-              <li key={i} className="flex items-start gap-2">
-                <span>•</span>
-                <span>{concern}</span>
-              </li>
-            ))}
-          </ul>
+        {match.strengths.length > 0 && (
+          <div className="mb-3">
+            <p className="text-green-700 font-medium mb-2">✅ נקודות חוזק:</p>
+            <ul className="text-sm text-green-600">
+              {match.strengths.map((strength: string, i: number) => (
+                <li key={i} className="flex items-start gap-2">
+                  <span>•</span>
+                  <span>{strength}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {match.concerns.length > 0 && (
+          <div className="mb-3">
+            <p className="text-orange-700 font-medium mb-2">⚠️ נקודות לתשומת לב:</p>
+            <ul className="text-sm text-orange-600">
+              {match.concerns.map((concern: string, i: number) => (
+                <li key={i} className="flex items-start gap-2">
+                  <span>•</span>
+                  <span>{concern}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="flex gap-3 mt-4">
+          <Button 
+            size="sm" 
+            variant="outline" 
+            onClick={loadCandidateProfiles}
+            className="border-blue-500 text-blue-600 hover:bg-blue-50"
+            disabled={isProcessing}
+          >
+            👥 צפה בפרופילים
+          </Button>
+          
+          {match.status === 'pending' && (
+            <>
+              <Button 
+                size="sm" 
+                className="bg-green-600 hover:bg-green-700 disabled:opacity-50"
+                onClick={handleApprove}
+                disabled={isProcessing}
+              >
+                {isProcessing ? '⏳ מעבד...' : '✅ אישור הצעה'}
+              </Button>
+              <Button 
+                size="sm" 
+                variant="outline" 
+                className="border-red-500 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                onClick={handleReject}
+                disabled={isProcessing}
+              >
+                {isProcessing ? '⏳ מעבד...' : '❌ דחיה'}
+              </Button>
+            </>
+          )}
+          
+          {match.status === 'approved' && (
+            <span className="text-sm text-green-600 font-medium px-3 py-2 bg-green-50 rounded">
+              ✅ ההצעה אושרה - מועברת להצעות פעילות
+            </span>
+          )}
+          
+          {match.status === 'rejected' && (
+            <span className="text-sm text-red-600 font-medium px-3 py-2 bg-red-50 rounded">
+              ❌ ההצעה נדחתה - נשמרה בהיסטוריה
+            </span>
+          )}
         </div>
-      )}
+      </Card>
 
-      <div className="flex gap-3 mt-4">
-        <Button size="sm" className="bg-green-600 hover:bg-green-700 flex-1">
-          ✅ אישור הצעה
-        </Button>
-        <Button size="sm" variant="outline" className="border-red-500 text-red-600 hover:bg-red-50 flex-1">
-          ❌ דחיה
-        </Button>
+      {/* מודל להצגת פרופילים מלאים */}
+      {showProfilesModal && (
+        <ProfilesModal
+          maleProfile={candidatesData.maleProfile}
+          femaleProfile={candidatesData.femaleProfile}
+          onClose={() => setShowProfilesModal(false)}
+        />
+      )}
+    </>
+  )
+}
+
+// רכיב מודל להצגת פרופילים מלאים
+const ProfilesModal = ({ 
+  maleProfile, 
+  femaleProfile, 
+  onClose 
+}: { 
+  maleProfile: any | null
+  femaleProfile: any | null
+  onClose: () => void 
+}) => {
+  const renderProfile = (profile: any, title: string) => {
+    if (!profile) {
+      return (
+        <div className="text-center py-8 text-gray-500">
+          <p>לא נמצא פרופיל עבור {title}</p>
+        </div>
+      )
+    }
+
+    return (
+      <div className="space-y-4">
+        <h3 className="text-xl font-bold text-gray-800 border-b pb-2">{title}</h3>
+        
+        <div className="max-h-[60vh] overflow-y-auto space-y-4">
+          {/* נתונים בסיסיים */}
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <span className="font-medium text-gray-600">שם:</span>
+              <span className="mr-2">{profile.name || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">גיל:</span>
+              <span className="mr-2">{profile.age || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">תאריך לידה:</span>
+              <span className="mr-2">{profile.birthDate || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">מצב משפחתי:</span>
+              <span className="mr-2">{profile.maritalStatus || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">טווח גיל מועדף:</span>
+              <span className="mr-2">{profile.preferredAgeRange || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">עיר:</span>
+              <span className="mr-2">{profile.location || profile.city || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">מגזר:</span>
+              <span className="mr-2">{profile.sector || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">פתוח למגזרים אחרים:</span>
+              <span className="mr-2">{profile.openToOtherSectors || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">עדה:</span>
+              <span className="mr-2">{profile.community || profile.edah || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">רמה דתית:</span>
+              <span className="mr-2">{profile.religiousLevel || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">זרם דתי:</span>
+              <span className="mr-2">{profile.religiousStream || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">השכלה:</span>
+              <span className="mr-2">{profile.education || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">מקצוע:</span>
+              <span className="mr-2">{profile.profession || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">שפות:</span>
+              <span className="mr-2">{profile.languages || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">גובה:</span>
+              <span className="mr-2">{profile.height || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">מראה:</span>
+              <span className="mr-2">{profile.appearance || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">סגנון לבוש:</span>
+              <span className="mr-2">{profile.dressStyle || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">עישון:</span>
+              <span className="mr-2">{profile.smoking || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">אחים:</span>
+              <span className="mr-2">{profile.siblings || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">מקום בסדר הלידה:</span>
+              <span className="mr-2">{profile.birthOrder || 'לא צוין'}</span>
+            </div>
+            <div>
+              <span className="font-medium text-gray-600">שימוש באינטרנט:</span>
+              <span className="mr-2">{profile.internetUsage || 'לא צוין'}</span>
+            </div>
+          </div>
+
+          {/* שדות טקסט ארוכים */}
+          <div className="space-y-3">
+            {profile.aboutMe && (
+              <div>
+                <span className="font-medium text-gray-600">קצת עליי:</span>
+                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.aboutMe}</p>
+              </div>
+            )}
+
+            {profile.lookingFor && (
+              <div>
+                <span className="font-medium text-gray-600">מחפש/ת:</span>
+                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.lookingFor}</p>
+              </div>
+            )}
+
+            {profile.importantQualities && (
+              <div>
+                <span className="font-medium text-gray-600">תכונות חשובות לי:</span>
+                <p className="text-gray-700 mt-1 bg-blue-50 p-2 rounded">{profile.importantQualities}</p>
+              </div>
+            )}
+
+            {profile.hobbies && (
+              <div>
+                <span className="font-medium text-gray-600">תחביבים ועניינים:</span>
+                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.hobbies}</p>
+              </div>
+            )}
+
+            {profile.valuesAndBeliefs && (
+              <div>
+                <span className="font-medium text-gray-600">ערכים ואמונות:</span>
+                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.valuesAndBeliefs}</p>
+              </div>
+            )}
+
+            {profile.personality && (
+              <div>
+                <span className="font-medium text-gray-600">אישיות:</span>
+                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.personality}</p>
+              </div>
+            )}
+
+            {profile.lifestyle && (
+              <div>
+                <span className="font-medium text-gray-600">סגנון חיים:</span>
+                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.lifestyle}</p>
+              </div>
+            )}
+
+            {profile.flexibility && (
+              <div>
+                <span className="font-medium text-gray-600">גמישות:</span>
+                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.flexibility}</p>
+              </div>
+            )}
+
+            {profile.educationViews && (
+              <div>
+                <span className="font-medium text-gray-600">השקפה על חינוך:</span>
+                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.educationViews}</p>
+              </div>
+            )}
+
+            {profile.familyBackground && (
+              <div>
+                <span className="font-medium text-gray-600">רקע משפחתי:</span>
+                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.familyBackground}</p>
+              </div>
+            )}
+
+            {profile.additionalNotes && (
+              <div>
+                <span className="font-medium text-gray-600">הערות נוספות:</span>
+                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.additionalNotes}</p>
+              </div>
+            )}
+
+            {profile.notes && (
+              <div>
+                <span className="font-medium text-gray-600">הערות:</span>
+                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.notes}</p>
+              </div>
+            )}
+
+            {profile.dealBreakers && (
+              <div>
+                <span className="font-medium text-gray-600">דרישות מהותיות (דיל ברייקרס):</span>
+                <p className="text-red-700 mt-1 bg-red-50 p-2 rounded border border-red-200 font-medium">{profile.dealBreakers}</p>
+              </div>
+            )}
+
+            {profile.contact && (
+              <div>
+                <span className="font-medium text-gray-600">פרטי קשר:</span>
+                <p className="text-gray-700 mt-1 bg-green-50 p-2 rounded">{profile.contact}</p>
+              </div>
+            )}
+
+            {profile.currentlyProposed && (
+              <div>
+                <span className="font-medium text-gray-600">הצעות נוכחיות:</span>
+                <p className="text-gray-700 mt-1 bg-yellow-50 p-2 rounded">{profile.currentlyProposed}</p>
+              </div>
+            )}
+
+            {profile.previouslyProposed && (
+              <div>
+                <span className="font-medium text-gray-600">הצעות קודמות:</span>
+                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.previouslyProposed}</p>
+              </div>
+            )}
+
+            {/* הצגת שדות דינמיים נוספים */}
+            {Object.entries(profile).map(([key, value]) => {
+              // דילוג על שדות שכבר הוצגו
+              if (['id', 'name', 'age', 'birthDate', 'maritalStatus', 'preferredAgeRange', 'sector', 'openToOtherSectors', 'location', 'city', 'community', 'edah', 
+                   'religiousLevel', 'religiousStream', 'education', 'profession', 'languages', 'height', 
+                   'appearance', 'dressStyle', 'smoking', 'siblings', 'birthOrder', 'internetUsage',
+                   'aboutMe', 'lookingFor', 'importantQualities', 'hobbies', 'valuesAndBeliefs', 
+                   'personality', 'lifestyle', 'flexibility', 'educationViews', 'familyBackground',
+                   'additionalNotes', 'notes', 'dealBreakers', 'contact', 'currentlyProposed', 
+                   'previouslyProposed'].includes(key)) {
+                return null
+              }
+
+              // הצגת שדות נוספים שיש בהם תוכן
+              if (value && typeof value === 'string' && value.trim()) {
+                return (
+                  <div key={key}>
+                    <span className="font-medium text-gray-600">{key}:</span>
+                    <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{value}</p>
+                  </div>
+                )
+              }
+              return null
+            })}
+          </div>
+        </div>
       </div>
-    </Card>
+    )
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center">
+          <h2 className="text-2xl font-bold text-gray-800">פרופילי המועמדים</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700 text-2xl font-bold"
+          >
+            ×
+          </button>
+        </div>
+        
+        <div className="p-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="bg-blue-50 rounded-lg p-6">
+              {renderProfile(maleProfile, `${maleProfile?.name || 'בחור'} (${maleProfile?.age || 'לא צוין'})`)}
+            </div>
+            
+            <div className="bg-pink-50 rounded-lg p-6">
+              {renderProfile(femaleProfile, `${femaleProfile?.name || 'בחורה'} (${femaleProfile?.age || 'לא צוין'})`)}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 } 

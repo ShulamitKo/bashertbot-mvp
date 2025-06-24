@@ -238,7 +238,7 @@ export interface DetailedCandidate {
 }
 
 // פונקציה לפרסור שורת מועמד לאובייקט
-const parseCandidate = (row: string[], gender: 'male' | 'female'): DetailedCandidate | null => {
+const parseCandidate = (row: string[], gender: 'male' | 'female', rowIndex: number): DetailedCandidate | null => {
   if (!row || row.length < 10) return null
   
   const [
@@ -252,8 +252,11 @@ const parseCandidate = (row: string[], gender: 'male' | 'female'): DetailedCandi
 
   if (!name || !age) return null
 
+  // יצירת מזהה שורה נכון - שורה 2 ואילך (שורה 1 זה כותרות)
+  const actualRowId = `${gender}_${rowIndex + 2}`
+
   return {
-    id: id || `${gender}-${Date.now()}`,
+    id: actualRowId, // שימוש במזהה השורה האמיתי
     name: name.trim(),
     birthDate,
     age: parseInt(age) || 0,
@@ -365,8 +368,8 @@ export const loadCandidatesFromSheet = async (
     }
 
     // עיבוד הנתונים
-    const males = (boysData.values || []).map((row: string[]) => parseCandidate(row, 'male')).filter(Boolean) as DetailedCandidate[]
-    const females = (girlsData.values || []).map((row: string[]) => parseCandidate(row, 'female')).filter(Boolean) as DetailedCandidate[]
+    const males = (boysData.values || []).map((row: string[], index: number) => parseCandidate(row, 'male', index)).filter(Boolean) as DetailedCandidate[]
+    const females = (girlsData.values || []).map((row: string[], index: number) => parseCandidate(row, 'female', index)).filter(Boolean) as DetailedCandidate[]
 
     console.log(`✅ נטענו בהצלחה: ${males.length} בנים, ${females.length} בנות`)
 

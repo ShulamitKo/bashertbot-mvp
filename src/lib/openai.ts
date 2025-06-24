@@ -5,6 +5,7 @@ import {
   applyHardFilters, 
   calculateLogicalScore,  
 } from './google-sheets'
+import { supabase } from './supabase'
 
 const openai = new OpenAI({
   apiKey: (import.meta as any).env.VITE_OPENAI_API_KEY,
@@ -105,16 +106,67 @@ const analyzeMatchWithGPT = async (male: DetailedCandidate, female: DetailedCand
   }
 }
 
-// יצירת זוגות פוטנציאליים עם ניקוד לוגי (כמו בקוד שלך)
-const createPotentialPairs = (males: DetailedCandidate[], females: DetailedCandidate[], logicalThreshold: number = 4) => {
+// פונקציה לבדיקת הצעות קיימות במסד הנתונים
+const getExistingProposals = async (): Promise<Set<string>> => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return new Set()
+
+    const { data: shadchan } = await supabase
+      .from('shadchanim')
+      .select('id')
+      .eq('auth_user_id', user.id)
+      .single()
+
+    if (!shadchan) return new Set()
+
+    const { data: existingProposals, error } = await supabase
+      .from('match_proposals')
+      .select('boy_row_id, girl_row_id')
+      .eq('shadchan_id', shadchan.id)
+      .in('status', ['approved', 'in_progress', 'pending']) // הצעות פעילות
+
+    if (error) {
+      console.error('שגיאה בקבלת הצעות קיימות:', error)
+      return new Set()
+    }
+
+    // יצירת Set של מפתחות יחודיים
+    const existingKeys = new Set<string>()
+    existingProposals?.forEach(proposal => {
+      existingKeys.add(`${proposal.boy_row_id}-${proposal.girl_row_id}`)
+    })
+
+    console.log(`🔍 נמצאו ${existingKeys.size} הצעות קיימות פעילות`)
+    return existingKeys
+
+  } catch (error) {
+    console.error('שגיאה בבדיקת הצעות קיימות:', error)
+    return new Set()
+  }
+}
+
+// יצירת זוגות פוטנציאליים עם ניקוד לוגי וסינון הצעות קיימות
+const createPotentialPairs = async (males: DetailedCandidate[], females: DetailedCandidate[], logicalThreshold: number = 4) => {
   const pairs = []
   let totalPairs = 0
   let hardFilterPassed = 0
   let logicalScorePassed = 0
+  let alreadyExists = 0
+
+  // קבלת הצעות קיימות
+  const existingProposals = await getExistingProposals()
 
   for (const male of males) {
     for (const female of females) {
       totalPairs++
+      
+      // בדיקה ראשונה: האם ההצעה כבר קיימת במסד הנתונים
+      const pairKey = `${male.id}-${female.id}`
+      if (existingProposals.has(pairKey)) {
+        alreadyExists++
+        continue // דלג על ההצעה הקיימת
+      }
       
       // שלב 1: סינון קשיח
       if (applyHardFilters(male, female)) {
@@ -139,6 +191,7 @@ const createPotentialPairs = (males: DetailedCandidate[], females: DetailedCandi
 
   console.log(`📊 סטטיסטיקות סינון:`)
   console.log(`   - סה"כ התאמות אפשריות: ${totalPairs}`)
+  console.log(`   - הצעות שכבר קיימות (דולגו): ${alreadyExists}`)
   console.log(`   - עברו סינון קשיח: ${hardFilterPassed}`)
   console.log(`   - יישלחו ל-GPT (ציון ≥${logicalThreshold}): ${logicalScorePassed}`)
   console.log(`   - חיסכון בעלות: ${((totalPairs - logicalScorePassed)/totalPairs*100).toFixed(1)}%`)
@@ -172,7 +225,13 @@ const processPairsInBatches = async (pairs: any[], batchSize: number = 3): Promi
           concerns: gptResponse.concerns || [],
           status: 'pending' as const,
           createdAt: new Date().toISOString(),
-          shadchanId: 'current-user'
+          shadchanId: 'current-user',
+          // הוספת מזהי שורות לשמירה במסד הנתונים
+          boy_row_id: pair.male.id,
+          girl_row_id: pair.female.id,
+          // הוספת נתוני המועמדים המלאים
+          boy_data: pair.male,
+          girl_data: pair.female
         } as MatchProposal
       } catch (error) {
         console.error(`❌ שגיאה בניתוח GPT לזוג ${pair.male.name}-${pair.female.name}:`, error)
@@ -199,39 +258,43 @@ const processPairsInBatches = async (pairs: any[], batchSize: number = 3): Promi
 export const generateMatches = async (
   males: DetailedCandidate[], 
   females: DetailedCandidate[],
-  logicalThreshold: number = 4,
-  maxMatches: number = 50
+  logicalThreshold: number = 5,
+  maxMatches: number = 10
 ): Promise<MatchProposal[]> => {
   console.log(`🚀 מתחיל תהליך התאמה חכם`)
   console.log(`📊 כמות בחורים: ${males.length}, בחורות: ${females.length}`)
-  console.log(`⚙️ סף לוגי: ${logicalThreshold}/10, מקסימום התאמות: ${maxMatches}`)
+  console.log(`⚙️ סף לוגי: ${logicalThreshold}/10, יוחזרו ${maxMatches} הטובות ביותר`)
 
-  // שלב 1+2: יצירת זוגות פוטנציאליים עם סינון וניקוד
-  const potentialPairs = createPotentialPairs(males, females, logicalThreshold)
+  // שלב 1+2: יצירת זוגות פוטנציאליים עם סינון וניקוד (עכשיו כולל בדיקת קיימות)
+  const potentialPairs = await createPotentialPairs(males, females, logicalThreshold)
   
   if (potentialPairs.length === 0) {
-    console.log('❌ לא נמצאו זוגות העוברים את הסינון')
+    console.log('❌ לא נמצאו זוגות חדשים העוברים את הסינון')
     return []
   }
 
-  // הגבלת כמות הזוגות למקסימום
-  const pairsToProcess = potentialPairs.slice(0, maxMatches)
-  console.log(`🎯 מעבד ${pairsToProcess.length} זוגות מתוך ${potentialPairs.length} פוטנציאליים`)
+  // **שינוי חשוב: כל מי שעבר את הסינונים ישלח ל-GPT**
+  console.log(`🎯 שולח את כל ${potentialPairs.length} הזוגות ל-GPT לניתוח מעמיק`)
+  console.log(`📈 לאחר ניתוח GPT יוחזרו ${maxMatches} הטובות ביותר`)
 
-  // שלב 3: עיבוד במקביל עם GPT
-  const matches = await processPairsInBatches(pairsToProcess, 3) // 3 בקשות במקביל
+  // שלב 3: עיבוד כל הזוגות עם GPT (ללא הגבלה מוקדמת)
+  const allMatches = await processPairsInBatches(potentialPairs, 3) // 3 בקשות במקביל
 
-  // מיון לפי ציון סופי
-  matches.sort((a, b) => b.finalScore - a.finalScore)
+  // שלב 4: מיון לפי ציון סופי והחזרת הטובות ביותר
+  allMatches.sort((a, b) => b.finalScore - a.finalScore)
+  
+  // **החזרת רק הטובות ביותר**
+  const topMatches = allMatches.slice(0, maxMatches)
 
-  // סיכום סופי
+  // סיכום סופי מפורט
   console.log(`\n📈 סיכום תהליך ההתאמה החכם:`)
-  console.log(`   🎯 התאמות סופיות: ${matches.length}`)
-  console.log(`   🤖 נותחו ב-GPT: ${pairsToProcess.length}`)
-  console.log(`   💸 עלות משוערת: $${(pairsToProcess.length * 0.0001).toFixed(4)}`)
-  console.log(`   ⚡ זמן חסוך: ~${Math.round((males.length * females.length - pairsToProcess.length) * 2)} שניות`)
+  console.log(`   🤖 נותחו ב-GPT: ${allMatches.length} זוגות`)
+  console.log(`   🎯 הוחזרו הטובות ביותר: ${topMatches.length}`)
+  console.log(`   📊 טווח ציונים: ${topMatches[topMatches.length-1]?.finalScore.toFixed(1)} - ${topMatches[0]?.finalScore.toFixed(1)}`)
+  console.log(`   💸 עלות משוערת: $${(allMatches.length * 0.0001).toFixed(4)}`)
+  console.log(`   ⚡ זמן חסוך: ~${Math.round((males.length * females.length - allMatches.length) * 2)} שניות`)
 
-  return matches
+  return topMatches
 }
 
 // פונקציה ליצירת אימייל התאמה (נשארת כמו שהיא)

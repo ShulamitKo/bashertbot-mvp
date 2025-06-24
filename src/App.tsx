@@ -5,6 +5,7 @@ import { Header } from './components/Layout/Header'
 import { getCurrentUser, getOrCreateShadchanProfile, onAuthStateChange } from './lib/auth'
 import { Shadchan } from './types'
 import './App.css'
+import { supabase } from './lib/supabase'
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -18,11 +19,15 @@ function App() {
 
     // האזנה לשינויים בסטטוס האימות
     const { data: { subscription } } = onAuthStateChange((event, session) => {
-      if (session?.user) {
+      console.log('🔄 שינוי סטטוס אימות:', { event, session })
+      
+      if (session?.user && session?.access_token) {
+        console.log('✅ סשן תקף - מחובר')
         setUser(session.user)
         setIsAuthenticated(true)
         loadShadchanProfile(session.user)
       } else {
+        console.log('❌ סשן לא תקף - מתנתק')
         setUser(null)
         setIsAuthenticated(false)
         setShadchan(null)
@@ -35,14 +40,27 @@ function App() {
 
   const checkAuthStatus = async () => {
     try {
+      // בדיקה כפולה - גם משתמש וגם סשן
       const currentUser = await getCurrentUser()
-      if (currentUser) {
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      console.log('🔍 בדיקת אימות:', { user: currentUser, session: session })
+      
+      if (currentUser && session) {
         setUser(currentUser)
         setIsAuthenticated(true)
         await loadShadchanProfile(currentUser)
+      } else {
+        console.warn('⚠️ משתמש או סשן לא תקינים')
+        setUser(null)
+        setIsAuthenticated(false)
+        setShadchan(null)
       }
     } catch (error) {
       console.error('שגיאה בבדיקת סטטוס אימות:', error)
+      setUser(null)
+      setIsAuthenticated(false)
+      setShadchan(null)
     } finally {
       setIsLoading(false)
     }

@@ -73,8 +73,8 @@ export interface MatchProposal {
   updated_at?: string;
   
   // נתונים מורחבים (יטענו בזמן אמת מהגיליון)
-  boy_data?: Candidate;
-  girl_data?: Candidate;
+  boy_data?: DetailedCandidate;
+  girl_data?: DetailedCandidate;
   boy_row_id?: string;
   girl_row_id?: string;
 }

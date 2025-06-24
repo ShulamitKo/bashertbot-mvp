@@ -99,4 +99,68 @@ export async function updateShadchanSettings(shadchanId: string, settings: Parti
 // בדיקת סטטוס אימות
 export function onAuthStateChange(callback: (event: string, session: any) => void) {
   return supabase.auth.onAuthStateChange(callback)
+}
+
+// פונקציה לבדיקת סטטוס האימות
+export const debugAuthStatus = async () => {
+  try {
+    console.log('🔍 בודק סטטוס אימות...')
+    
+    // בדיקת סשן נוכחי
+    const { data: session, error: sessionError } = await supabase.auth.getSession()
+    console.log('📋 Session data:', session)
+    if (sessionError) {
+      console.error('❌ Session error:', sessionError)
+    }
+    
+    // בדיקת משתמש נוכחי
+    const { data: { user }, error: userError } = await supabase.auth.getUser()
+    console.log('👤 User data:', user)
+    if (userError) {
+      console.error('❌ User error:', userError)
+    }
+    
+    // אם יש משתמש, בואו נבדוק אם יש לו שדכן
+    if (user) {
+      const { data: shadchan, error: shadchanError } = await supabase
+        .from('shadchanim')
+        .select('*')
+        .eq('auth_user_id', user.id)
+        .single()
+      
+      console.log('🎯 Shadchan data:', shadchan)
+      if (shadchanError) {
+        console.error('❌ Shadchan error:', shadchanError)
+      }
+    }
+    
+  } catch (error) {
+    console.error('❌ Debug auth error:', error)
+  }
+}
+
+// פונקציה לרענון הטוקן
+export const refreshAuthToken = async (): Promise<boolean> => {
+  try {
+    console.log('🔄 מרענן טוקן אימות...')
+    
+    const { data, error } = await supabase.auth.refreshSession()
+    
+    if (error) {
+      console.error('❌ שגיאה ברענון טוקן:', error)
+      return false
+    }
+    
+    if (data.session) {
+      console.log('✅ טוקן רוענן בהצלחה')
+      return true
+    }
+    
+    console.warn('⚠️ לא התקבל טוקן חדש')
+    return false
+    
+  } catch (error) {
+    console.error('❌ שגיאה ברענון טוקן:', error)
+    return false
+  }
 } 
