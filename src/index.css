@@ -47,4 +47,36 @@
 
 .progress-wave {
   animation: wave 2s ease-in-out infinite;
-} 
+}
+
+/* אנימציות לאקורדיון */
+@keyframes slideDown {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px);
+    max-height: 0;
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    max-height: 500px;
+  }
+}
+
+@keyframes slideUp {
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+    max-height: 500px;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-10px);
+    max-height: 0;
+  }
+}
+
+.accordion-content {
+  overflow: hidden;
+  transition: all 0.3s ease-in-out;
+}

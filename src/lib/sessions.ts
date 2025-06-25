@@ -2,6 +2,51 @@ import { supabase } from './supabase'
 import { MatchProposal } from '../types'
 import { refreshAuthToken } from './auth'
 
+// פונקציה ליצירת ai_reasoning מפורט עם כל המידע
+const createDetailedReasoning = (match: MatchProposal): string => {
+  const parts: string[] = []
+  
+  // ציונים מפורטים
+  if (match.logicalScore || match.gptScore || match.finalScore) {
+    const scores: string[] = []
+    if (match.logicalScore) scores.push(`🧮 לוגי: ${match.logicalScore.toFixed(1)}/10`)
+    if (match.gptScore) scores.push(`🤖 GPT: ${match.gptScore}/10`)
+    if (match.finalScore) scores.push(`🎯 סופי: ${match.finalScore.toFixed(1)}/10`)
+    
+    if (scores.length > 0) {
+      parts.push(`ציונים: ${scores.join(' ')}`)
+    }
+  }
+  
+  // סיכום
+  if (match.summary) {
+    parts.push(`💭 סיכום: ${match.summary}`)
+  }
+  
+  // נקודות חוזק
+  if (match.strengths && match.strengths.length > 0) {
+    parts.push(`✅ נקודות חוזק:`)
+    match.strengths.forEach(strength => {
+      parts.push(`• ${strength}`)
+    })
+  }
+  
+  // נקודות לתשומת לב
+  if (match.concerns && match.concerns.length > 0) {
+    parts.push(`⚠️ נקודות לתשומת לב:`)
+    match.concerns.forEach(concern => {
+      parts.push(`• ${concern}`)
+    })
+  }
+  
+  // אם אין מידע מפורט, השתמש במה שיש
+  if (parts.length === 0) {
+    return match.summary || match.ai_reasoning || 'התאמה מאושרת'
+  }
+  
+  return parts.join('\n')
+}
+
 // מונה שגיאות 406 כדי לכבות את הבדיקה אם יש יותר מדי
 let proposal406ErrorCount = 0
 const MAX_406_ERRORS = 3
@@ -523,30 +568,26 @@ export const moveMatchToProposals = async (match: MatchProposal): Promise<void> 
     // קבלת הסשן הפעיל (לחיבור ההצעה)
     const activeSession = await getActiveSession()
 
-    console.log('מנסה להוסיף הצעה עם הנתונים:', {
+    // יצירת ai_reasoning מפורט עם כל המידע
+    const detailedReasoning = createDetailedReasoning(match)
+    
+    // נתונים בסיסיים שקיימים במסד הנתונים
+    const basicProposalData = {
       shadchan_id: shadchan.id,
       boy_row_id: boyRowId,
       girl_row_id: girlRowId,
       match_score: score,
-      ai_reasoning: match.summary || '',
+      ai_reasoning: detailedReasoning,
       status: 'approved',
-      original_session_id: activeSession?.id || null,
-      timestamp: new Date().toISOString()
-    })
-    
+      original_session_id: activeSession?.id || null
+    }
+
+    console.log('מנסה להוסיף הצעה עם הנתונים הבסיסיים:', basicProposalData)
     console.log('⏰ זמן נוכחי:', new Date().toISOString())
 
     const { error } = await supabase
       .from('match_proposals')
-      .insert({
-        shadchan_id: shadchan.id,
-        boy_row_id: boyRowId,
-        girl_row_id: girlRowId,
-        match_score: score,
-        ai_reasoning: match.summary || '',
-        status: 'approved',
-        original_session_id: activeSession?.id || null
-      })
+      .insert(basicProposalData)
 
     if (error) {
       console.error('שגיאה בהוספת הצעה:', error)

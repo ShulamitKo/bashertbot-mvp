@@ -23,6 +23,9 @@ import {
   checkAuthConnection,
   reset406ErrorCount
 } from '@/lib/sessions'
+import { loadEnhancedProposals, updateProposalStatus } from '@/lib/proposals'
+import { EnhancedProposal, ProposalsFilter } from '@/types'
+import { ProposalCard } from '@/components/ui/ProposalCard'
 
 interface DashboardPageProps {
   user?: {
@@ -47,6 +50,25 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
     progress: null
   })
 
+  // State למספר הצעות פעילות
+  const [activeProposalsCount, setActiveProposalsCount] = useState(0)
+
+  // פונקציה לטעינת מספר ההצעות הפעילות בלבד (מהירה)
+  const loadActiveProposalsCount = async () => {
+    try {
+      const { data: currentProposals } = await supabase
+        .from('match_proposals')
+        .select('id')
+        .in('status', ['approved', 'in_progress', 'completed'])
+      
+      const count = currentProposals?.length || 0
+      setActiveProposalsCount(count)
+      console.log('📊 נטען מספר הצעות פעילות:', count)
+    } catch (error) {
+      console.error('שגיאה בטעינת מספר הצעות:', error)
+    }
+  }
+
   useEffect(() => {
     // איפוס מונה שגיאות 406 בתחילת הטעינה
     reset406ErrorCount()
@@ -62,7 +84,7 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
     // הוספת דיבוג לבדיקת סטטוס האימות
     const initializeAuth = async () => {
       console.log('🔍 מתחיל בדיקת אימות...')
-      
+        
       // בדיקת סשן נוכחי
       const { data: { session }, error: sessionError } = await supabase.auth.getSession()
       console.log('📋 Session:', session)
@@ -77,14 +99,17 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
       await debugAuthStatus()
       await getAccessToken()
       setAuthStatus('authenticated')
+      
+      // טעינת מספר ההצעות הפעילות מיד בטעינת הדף
+      await loadActiveProposalsCount()
     }
-    
+
     initializeAuth()
   }, [])
 
   const tabs = [
     { id: 'matches' as TabType, label: 'התאמות חדשות', icon: Heart, count: 0 },
-    { id: 'proposals' as TabType, label: 'הצעות פעילות', icon: Users, count: 0 },
+    { id: 'proposals' as TabType, label: 'הצעות פעילות', icon: Users, count: activeProposalsCount },
     { id: 'import' as TabType, label: 'ייבוא מועמדים', icon: Upload, count: 0 },
     { id: 'history' as TabType, label: 'היסטוריה', icon: History, count: 0 },
     { id: 'settings' as TabType, label: 'הגדרות', icon: Settings, count: 0 },
@@ -150,9 +175,10 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
           accessToken={accessToken} 
           globalScanState={globalScanState}
           setGlobalScanState={setGlobalScanState}
+          onProposalCountChange={setActiveProposalsCount}
         />
       case 'proposals':
-        return <ProposalsTab />
+        return <ProposalsTab accessToken={accessToken} onCountChange={setActiveProposalsCount} />
       case 'import':
         return <ImportTab accessToken={accessToken} />
       case 'history':
@@ -164,6 +190,7 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
           accessToken={accessToken} 
           globalScanState={globalScanState}
           setGlobalScanState={setGlobalScanState}
+          onProposalCountChange={setActiveProposalsCount}
         />
     }
   }
@@ -175,12 +202,12 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
         <div className="mb-8">
           <div className="flex justify-between items-start">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                שלום {user?.name || 'שדכן'} 👋
-              </h1>
-              <p className="text-gray-600">
-                מוכנה לבצע התאמות חדשות היום?
-              </p>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">
+            שלום {user?.name || 'שדכן'} 👋
+          </h1>
+          <p className="text-gray-600">
+            מוכנה לבצע התאמות חדשות היום?
+          </p>
             </div>
             <Button
               variant="outline"
@@ -233,13 +260,20 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
             </div>
           </div>
 
-          <div className="bg-white rounded-lg p-6 shadow-sm border border-gray-200">
+          <div className="bg-white rounded-lg p-6 shadow-sm border border-gray-200 transition-all duration-300 hover:shadow-md">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">הצעות פעילות</p>
-                <p className="text-2xl font-bold text-gray-900">0</p>
+                <p className="text-2xl font-bold text-gray-900 transition-all duration-500">
+                  {activeProposalsCount}
+                  {activeProposalsCount > 0 && (
+                    <span className="text-sm text-blue-600 mr-2">✨</span>
+                  )}
+                </p>
               </div>
-              <Users className="w-8 h-8 text-blue-600" />
+              <Users className={`w-8 h-8 transition-colors duration-300 ${
+                activeProposalsCount > 0 ? 'text-blue-600' : 'text-gray-400'
+              }`} />
             </div>
           </div>
 
@@ -344,7 +378,8 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
 const MatchesTab = ({ 
   accessToken, 
   globalScanState, 
-  setGlobalScanState 
+  setGlobalScanState,
+  onProposalCountChange
 }: { 
   accessToken: string | null
   globalScanState: {
@@ -355,6 +390,7 @@ const MatchesTab = ({
     isScanning: boolean
     progress: { current: number, total: number, message: string } | null
   }>>
+  onProposalCountChange: (count: number) => void
 }) => {
   const [matches, setMatches] = useState<MatchProposal[]>([])
   const [loading, setLoading] = useState(false)
@@ -403,12 +439,12 @@ const MatchesTab = ({
   // פונקציה לביצוע סריקה חדשה
   const performNewScan = async () => {
     try {
-      setLoading(true)
-      setError(null)
-      
+    setLoading(true)
+    setError(null)
+    
       // הפעלת מצב סריקה עם אנימציות
-      setGlobalScanState({
-        isScanning: true,
+    setGlobalScanState({
+      isScanning: true,
         progress: { current: 0, total: 100, message: 'מתחיל סריקה...' }
       })
       
@@ -439,7 +475,7 @@ const MatchesTab = ({
       }
       
       const candidatesData = await loadCandidatesFromSheet(accessToken!, sheetId)
-      
+
       if (candidatesData.males.length === 0 || candidatesData.females.length === 0) {
         throw new Error('לא נמצאו מועמדים בגיליון')
       }
@@ -489,14 +525,14 @@ const MatchesTab = ({
       setTimeout(() => {
         setGlobalScanState({ isScanning: false, progress: null })
       }, 2000)
-      
+
     } catch (error: any) {
       console.error('שגיאה ביצירת התאמות:', error)
       setError(`שגיאה ביצירת התאמות: ${error.message}`)
       setLoading(false)
       
       // איפוס מצב הסריקה בשגיאה
-      setGlobalScanState({ isScanning: false, progress: null })
+          setGlobalScanState({ isScanning: false, progress: null })
       
       // הוספת עיכוב לפני איפוס השגיאה (למשתמש לראות)
       if (error.message?.includes('Rate limit')) {
@@ -638,7 +674,7 @@ const MatchesTab = ({
                               onStatusUpdate={async (matchId, newStatus) => {
                   try {
                     // שימוש בפונקציה המרכזית לעדכון סטטוס
-                    const updatedMatches = await updateMatchStatus(matches, matchId, newStatus)
+                    const updatedMatches = await updateMatchStatus(matches, matchId, newStatus, onProposalCountChange)
                     setMatches(updatedMatches)
                     
                     // הודעת הצלחה לעדכון הממשק
@@ -765,7 +801,7 @@ const MatchesTab = ({
 }
 
 // פונקציית עזר לעדכון סטטוס התאמה
-const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newStatus: 'approved' | 'rejected') => {
+const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newStatus: 'approved' | 'rejected', onProposalCountChange?: (count: number) => void) => {
   const updatedMatches = matches.map(m => 
     m.id === matchId ? { ...m, status: newStatus } : m
   )
@@ -781,6 +817,26 @@ const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newS
     const approvedMatch = updatedMatches.find(m => m.id === matchId)
     if (approvedMatch) {
       await moveMatchToProposals(approvedMatch)
+      
+      // עדכון מונה ההצעות הפעילות מיד
+      if (onProposalCountChange) {
+        // המתנה קצרה לוודא שההצעה נשמרה במסד הנתונים
+        setTimeout(async () => {
+          try {
+            console.log('🔍 בודק מספר הצעות פעילות לאחר אישור...')
+            const { data: currentProposals } = await supabase
+              .from('match_proposals')
+              .select('id')
+              .in('status', ['approved', 'in_progress', 'completed'])
+            
+            const newCount = currentProposals?.length || 0
+            console.log('📊 נמצאו', newCount, 'הצעות פעילות, מעדכן מונה...')
+            onProposalCountChange(newCount)
+          } catch (error) {
+            console.error('שגיאה בעדכון מונה הצעות:', error)
+          }
+        }, 200) // המתנה קצרה לוודא שההכנסה הסתיימה
+      }
     }
   }
   
@@ -788,48 +844,156 @@ const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newS
 }
 
 // רכיב טאב הצעות
-const ProposalsTab = () => {
-  const [proposals, setProposals] = useState<any[]>([])
+const ProposalsTab = ({ accessToken, onCountChange }: { accessToken: string | null, onCountChange: (count: number) => void }) => {
+  const [proposals, setProposals] = useState<EnhancedProposal[]>([])
+  const [filteredProposals, setFilteredProposals] = useState<EnhancedProposal[]>([]) // הצעות מסוננות לתצוגה
   const [loading, setLoading] = useState(true)
+  const [selectedProposal, setSelectedProposal] = useState<EnhancedProposal | null>(null)
+  const [isFirstLoad, setIsFirstLoad] = useState(true) // מציין אם זו הטעינה הראשונה
+  const [searchText, setSearchText] = useState('') // טקסט החיפוש הנוכחי
+  const [filter, setFilter] = useState<ProposalsFilter>({
+    status: ['approved', 'in_progress', 'completed'],
+    sortBy: 'created_at',
+    sortOrder: 'desc'
+  })
 
   useEffect(() => {
-    loadActiveProposals()
-  }, [])
+    if (accessToken) {
+      loadEnhancedProposalsData()
+    }
+  }, [accessToken, filter])
 
-  const loadActiveProposals = async () => {
+  // אתחול filteredProposals כאשר proposals משתנה (ללא חיפוש)
+  useEffect(() => {
+    if (!filter.searchTerm) {
+      setFilteredProposals(proposals)
+    }
+  }, [proposals, filter.searchTerm])
+
+  // הסרתי את ה-useEffect שמעדכן את המונה כל פעם - זה יוצר עדכונים מיותרים
+
+  // פונקציה ליישום חיפוש טקסט בלבד (לא משפיעה על המונה הכללי)
+  const applyTextSearch = (proposalsToFilter: EnhancedProposal[], searchTerm: string) => {
+    let result = proposalsToFilter
+    
+    if (searchTerm && searchTerm.trim()) {
+      const searchLower = searchTerm.toLowerCase()
+      result = proposalsToFilter.filter(p => 
+        p.boyDetails?.name.toLowerCase().includes(searchLower) ||
+        p.girlDetails?.name.toLowerCase().includes(searchLower)
+      )
+    }
+    
+    setFilteredProposals(result)
+  }
+
+  // פונקציה שמטפלת בלחיצת Enter בתיבת החיפוש
+  const handleSearchKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      // עדכון הפילטר עם הטקסט החדש
+      setFilter(prev => ({ ...prev, searchTerm: searchText }))
+      // יישום החיפוש על ההצעות הנוכחיות
+      applyTextSearch(proposals, searchText)
+    }
+  }
+
+  // פונקציה לניקוי החיפוש
+  const clearSearch = () => {
+    setSearchText('')
+    setFilter(prev => ({ ...prev, searchTerm: '' }))
+    applyTextSearch(proposals, '')
+  }
+
+  const loadEnhancedProposalsData = async () => {
+    if (!accessToken) return
+    
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        console.error('משתמש לא מחובר')
-        return
+      setLoading(true)
+      console.log('🔄 טוען הצעות פעילות...')
+      const enhancedProposals = await loadEnhancedProposals(accessToken)
+      console.log('📊 נטענו הצעות:', enhancedProposals.length)
+      
+      // יישום פילטרים בסיסיים (ללא חיפוש טקסט)
+      let filtered = enhancedProposals
+      
+      if (filter.status && filter.status.length > 0) {
+        filtered = filtered.filter(p => filter.status!.includes(p.status))
       }
-
-      const { data: shadchan } = await supabase
-        .from('shadchanim')
-        .select('id')
-        .eq('auth_user_id', user.id)
-        .single()
-
-      if (!shadchan) {
-        console.error('לא נמצא פרופיל שדכן')
-        return
+      
+      // הסרתי את חיפוש הטקסט מכאן - זה יטופל בנפרד
+      
+      // מיון
+      if (filter.sortBy) {
+        filtered.sort((a, b) => {
+          let aVal: any, bVal: any
+          
+          switch (filter.sortBy) {
+            case 'created_at':
+              aVal = new Date(a.created_at || '1970-01-01')
+              bVal = new Date(b.created_at || '1970-01-01')
+              break
+            case 'last_activity':
+              aVal = new Date(a.lastActivity || '1970-01-01')
+              bVal = new Date(b.lastActivity || '1970-01-01')
+              break
+            case 'match_score':
+              aVal = a.match_score || 0
+              bVal = b.match_score || 0
+              break
+            case 'days_in_process':
+              aVal = a.daysInProcess || 0
+              bVal = b.daysInProcess || 0
+              break
+            default:
+              return 0
+          }
+          
+          const result = aVal > bVal ? 1 : aVal < bVal ? -1 : 0
+          return filter.sortOrder === 'desc' ? -result : result
+        })
       }
-
-      const { data: activeProposals, error } = await supabase
-        .from('match_proposals')
-        .select('*')
-        .eq('shadchan_id', shadchan.id)
-        .in('status', ['approved', 'in_progress'])
-        .order('created_at', { ascending: false })
-
-      if (error) throw error
-
-      setProposals(activeProposals || [])
-      console.log('טעון', activeProposals?.length || 0, 'הצעות פעילות')
+      
+      // שמירת כל ההצעות (מסוננות בלי חיפוש טקסט)
+      setProposals(filtered)
+      // יישום חיפוש טקסט על ההצעות המסוננות
+      applyTextSearch(filtered, filter.searchTerm || '')
+      
+      // עדכון מספר ההצעות הכולל (לא לפי החיפוש!)
+      onCountChange(filtered.length)
+      setIsFirstLoad(false) // מעכשיו זו לא הטעינה הראשונה
+      console.log('✅ מוצגות', filtered.length, 'הצעות פעילות מתוך', enhancedProposals.length, 'כולל')
     } catch (error) {
-      console.error('שגיאה בטעינת הצעות פעילות:', error)
+      console.error('שגיאה בטעינת הצעות מורחבות:', error)
+      // רק במקרה של שגיאה אמיתית נאפס את המונה
+      if (isFirstLoad) onCountChange(0) // רק בטעינה הראשונה נאפס במקרה של שגיאה
     } finally {
       setLoading(false)
+    }
+  }
+
+  // פונקציה לעדכון הצעה יחידה בלי לטעון הכל מחדש
+  const updateSingleProposal = async (proposalId: string) => {
+    console.log('🔄 מעדכן הצעה יחידה:', proposalId)
+    try {
+      // טעינת ההצעה המעודכנת מהשרת
+      const updatedProposals = await loadEnhancedProposals(accessToken!)
+      const updatedProposal = updatedProposals.find(p => p.id === proposalId)
+      
+      if (updatedProposal) {
+        // עדכון רק ההצעה הספציפית ברשימה הקיימת
+        setProposals(prevProposals => {
+          const newProposals = prevProposals.map(p => 
+            p.id === proposalId ? updatedProposal : p
+          )
+          onCountChange(newProposals.length) // עדכון המונה
+          return newProposals
+        })
+        console.log('✅ הצעה עודכנה בהצלחה:', proposalId)
+      }
+    } catch (error) {
+      console.error('❌ שגיאה בעדכון הצעה יחידה:', error)
+      // במקרה של שגיאה, נטען הכל מחדש כגיבוי
+      await loadEnhancedProposalsData()
     }
   }
 
@@ -839,9 +1003,66 @@ const ProposalsTab = () => {
 
   return (
     <div>
-      <h2 className="text-xl font-semibold mb-4">הצעות פעילות</h2>
+      {/* כותרת וסינון */}
+      <div className="flex justify-between items-center mb-6">
+        <div className="flex items-center gap-3">
+          <h2 className="text-xl font-semibold">הצעות פעילות</h2>
+          <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-medium">
+            {proposals.length} הצעות
+          </span>
+        </div>
+        
+        {/* פילטרים בסיסיים */}
+        <div className="flex gap-3">
+          <select
+            value={filter.sortBy}
+            onChange={(e) => setFilter(prev => ({ ...prev, sortBy: e.target.value as any }))}
+            className="border rounded-lg px-3 py-1 text-sm"
+          >
+            <option value="created_at">לפי תאריך יצירה</option>
+            <option value="last_activity">לפי פעילות אחרונה</option>
+            <option value="match_score">לפי ציון התאמה</option>
+            <option value="days_in_process">לפי ימים בתהליך</option>
+          </select>
+          
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="חיפוש לפי שם (לחץ Enter)..."
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              onKeyPress={handleSearchKeyPress}
+              className="border rounded-lg px-3 py-1 text-sm w-48"
+            />
+            {filter.searchTerm && (
+              <button
+                onClick={clearSearch}
+                className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                title="נקה חיפוש"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
       
-      {proposals.length === 0 ? (
+      {filteredProposals.length === 0 && filter.searchTerm ? (
+        <div className="text-center py-12">
+          <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">לא נמצאו תוצאות</h3>
+          <p className="text-gray-600">
+            לא נמצאו הצעות התואמות לחיפוש "{filter.searchTerm}".<br/>
+            נסה מילות חיפוש אחרות או נקה את החיפוש.
+          </p>
+          <button
+            onClick={clearSearch}
+            className="mt-4 text-blue-600 hover:text-blue-800 underline"
+          >
+            נקה חיפוש
+          </button>
+        </div>
+      ) : proposals.length === 0 ? (
         <div className="text-center py-12">
           <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">אין הצעות פעילות</h3>
@@ -852,84 +1073,24 @@ const ProposalsTab = () => {
         </div>
       ) : (
         <div className="space-y-4">
-          {proposals.map((proposal) => (
-            <Card key={proposal.id} className="p-4 border-r-4 border-r-green-500">
-              <div className="flex justify-between items-start mb-3">
-                <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-green-800">
-                    הצעה פעילה #{proposal.id.slice(-8)}
-                  </h3>
-                  <div className="flex gap-4 mt-2 text-sm text-gray-600">
-                    <span className="bg-green-100 px-2 py-1 rounded-full">
-                      ✅ מאושר
-                    </span>
-                    <span className="bg-blue-100 px-2 py-1 rounded-full">
-                      🎯 ציון: {proposal.match_score ? (proposal.match_score * 10).toFixed(1) : 'N/A'}/10
-                    </span>
-                    <span className="text-xs text-gray-500">
-                      נוצר: {new Date(proposal.created_at).toLocaleDateString('he-IL')}
-                    </span>
-                  </div>
-                </div>
-                <div className="text-left">
-                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                    proposal.status === 'approved' ? 'bg-green-100 text-green-800' :
-                    proposal.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
-                    {proposal.status === 'approved' ? 'מאושר' : 
-                     proposal.status === 'in_progress' ? 'בתהליך' : proposal.status}
-                  </span>
-                </div>
-              </div>
-              
-              <div className="mb-3">
-                <p className="text-gray-700 font-medium mb-2">📋 מזהי המועמדים:</p>
-                <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <span className="font-medium">בחור:</span> {proposal.boy_row_id}
-                    </div>
-                    <div>
-                      <span className="font-medium">בחורה:</span> {proposal.girl_row_id}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {proposal.ai_reasoning && (
-                <div className="mb-3">
-                  <p className="text-gray-700 font-medium mb-2">🤖 הסבר AI:</p>
-                  <p className="text-sm text-gray-600 bg-blue-50 p-3 rounded">{proposal.ai_reasoning}</p>
-                </div>
-              )}
-
-              <div className="flex gap-3 mt-4">
-                <Button 
-                  size="sm" 
-                  variant="outline"
-                  className="border-blue-500 text-blue-600 hover:bg-blue-50"
-                >
-                  📞 צור קשר
-                </Button>
-                <Button 
-                  size="sm" 
-                  variant="outline"
-                  className="border-orange-500 text-orange-600 hover:bg-orange-50"
-                >
-                  📝 עדכן סטטוס
-                </Button>
-                <Button 
-                  size="sm" 
-                  variant="outline"
-                  className="border-gray-500 text-gray-600 hover:bg-gray-50"
-                >
-                  📊 הוספת הערות
-                </Button>
-              </div>
-            </Card>
+          {filteredProposals.map((proposal) => (
+            <ProposalCard
+              key={proposal.id}
+              proposal={proposal}
+              onUpdate={() => updateSingleProposal(proposal.id)}
+              onViewProfiles={setSelectedProposal}
+            />
           ))}
         </div>
+      )}
+
+      {/* מודל צפיה בפרופילים */}
+      {selectedProposal && (
+        <ProfilesModal
+          maleProfile={selectedProposal.boyDetails}
+          femaleProfile={selectedProposal.girlDetails}
+          onClose={() => setSelectedProposal(null)}
+        />
       )}
     </div>
   )
@@ -1769,70 +1930,70 @@ const MatchCard = ({ match, matches, onStatusUpdate }: {
 
   return (
     <>
-      <Card className="p-4 border-r-4 border-r-blue-500">
-        <div className="flex justify-between items-start mb-3">
-          <div className="flex-1">
-            <h3 className="text-lg font-semibold text-blue-800">
+    <Card className="p-4 border-r-4 border-r-blue-500">
+      <div className="flex justify-between items-start mb-3">
+        <div className="flex-1">
+          <h3 className="text-lg font-semibold text-blue-800">
               {match.maleName} {match.boy_data?.age && `(${match.boy_data.age})`} ← → {match.femaleName} {match.girl_data?.age && `(${match.girl_data.age})`}
-            </h3>
-            <div className="flex gap-4 mt-2 text-sm text-gray-600">
-              <span className="bg-green-100 px-2 py-1 rounded-full">
-                🧮 לוגי: {match.logicalScore.toFixed(1)}/10
-              </span>
-              <span className="bg-purple-100 px-2 py-1 rounded-full">
-                🤖 GPT: {match.gptScore}/10
-              </span>
-              <span className="bg-blue-100 px-2 py-1 rounded-full font-medium">
-                🎯 סופי: {match.finalScore.toFixed(1)}/10
-              </span>
-            </div>
-          </div>
-          <div className="text-left">
-            <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-              match.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-              match.status === 'approved' ? 'bg-green-100 text-green-800' :
-              'bg-red-100 text-red-800'
-            }`}>
-              {match.status === 'pending' ? 'ממתין' : 
-               match.status === 'approved' ? 'אושר' : 'נדחה'}
+          </h3>
+          <div className="flex gap-4 mt-2 text-sm text-gray-600">
+            <span className="bg-green-100 px-2 py-1 rounded-full">
+              🧮 לוגי: {match.logicalScore.toFixed(1)}/10
+            </span>
+            <span className="bg-purple-100 px-2 py-1 rounded-full">
+              🤖 GPT: {match.gptScore}/10
+            </span>
+            <span className="bg-blue-100 px-2 py-1 rounded-full font-medium">
+              🎯 סופי: {match.finalScore.toFixed(1)}/10
             </span>
           </div>
         </div>
-        
-        <div className="mb-3">
-          <p className="text-gray-700 font-medium mb-2">💭 סיכום ההתאמה:</p>
-          <p className="text-sm text-gray-600 bg-gray-50 p-3 rounded">{match.summary}</p>
+        <div className="text-left">
+          <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+            match.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+            match.status === 'approved' ? 'bg-green-100 text-green-800' :
+            'bg-red-100 text-red-800'
+          }`}>
+            {match.status === 'pending' ? 'ממתין' : 
+             match.status === 'approved' ? 'אושר' : 'נדחה'}
+          </span>
         </div>
+      </div>
+      
+      <div className="mb-3">
+        <p className="text-gray-700 font-medium mb-2">💭 סיכום ההתאמה:</p>
+        <p className="text-sm text-gray-600 bg-gray-50 p-3 rounded">{match.summary}</p>
+      </div>
 
-        {match.strengths.length > 0 && (
-          <div className="mb-3">
-            <p className="text-green-700 font-medium mb-2">✅ נקודות חוזק:</p>
-            <ul className="text-sm text-green-600">
-              {match.strengths.map((strength: string, i: number) => (
-                <li key={i} className="flex items-start gap-2">
-                  <span>•</span>
-                  <span>{strength}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+      {match.strengths.length > 0 && (
+        <div className="mb-3">
+          <p className="text-green-700 font-medium mb-2">✅ נקודות חוזק:</p>
+          <ul className="text-sm text-green-600">
+            {match.strengths.map((strength: string, i: number) => (
+              <li key={i} className="flex items-start gap-2">
+                <span>•</span>
+                <span>{strength}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
-        {match.concerns.length > 0 && (
-          <div className="mb-3">
-            <p className="text-orange-700 font-medium mb-2">⚠️ נקודות לתשומת לב:</p>
-            <ul className="text-sm text-orange-600">
-              {match.concerns.map((concern: string, i: number) => (
-                <li key={i} className="flex items-start gap-2">
-                  <span>•</span>
-                  <span>{concern}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+      {match.concerns.length > 0 && (
+        <div className="mb-3">
+          <p className="text-orange-700 font-medium mb-2">⚠️ נקודות לתשומת לב:</p>
+          <ul className="text-sm text-orange-600">
+            {match.concerns.map((concern: string, i: number) => (
+              <li key={i} className="flex items-start gap-2">
+                <span>•</span>
+                <span>{concern}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
-        <div className="flex gap-3 mt-4">
+      <div className="flex gap-3 mt-4">
           <Button 
             size="sm" 
             variant="outline" 
@@ -1841,7 +2002,7 @@ const MatchCard = ({ match, matches, onStatusUpdate }: {
             disabled={isProcessing}
           >
             👥 צפה בפרופילים
-          </Button>
+        </Button>
           
           {match.status === 'pending' && (
             <>
@@ -1852,7 +2013,7 @@ const MatchCard = ({ match, matches, onStatusUpdate }: {
                 disabled={isProcessing}
               >
                 {isProcessing ? '⏳ מעבד...' : '✅ אישור הצעה'}
-              </Button>
+        </Button>
               <Button 
                 size="sm" 
                 variant="outline" 
@@ -1876,8 +2037,8 @@ const MatchCard = ({ match, matches, onStatusUpdate }: {
               ❌ ההצעה נדחתה - נשמרה בהיסטוריה
             </span>
           )}
-        </div>
-      </Card>
+      </div>
+    </Card>
 
       {/* מודל להצגת פרופילים מלאים */}
       {showProfilesModal && (

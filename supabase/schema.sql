@@ -47,8 +47,19 @@ CREATE TABLE match_proposals (
     girl_row_id TEXT NOT NULL,
     
     -- פרטי הצעה
-    match_score DECIMAL(3,2), -- ציון התאמה 0.00-1.00
-    ai_reasoning TEXT, -- הסבר של ה-AI
+    match_score DECIMAL(3,2), -- ציון התאמה 0.00-1.00 (ישן)
+    ai_reasoning TEXT, -- הסבר של ה-AI (ישן)
+    
+    -- ציונים מפורטים (חדש)
+    logical_score DECIMAL(3,1), -- ציון לוגי 0.0-10.0
+    gpt_score INTEGER, -- ציון GPT 1-10
+    final_score DECIMAL(3,1), -- ציון סופי 0.0-10.0
+    
+    -- פירוט מפורט (חדש)
+    summary TEXT, -- סיכום מפורט
+    strengths TEXT, -- נקודות חוזק (JSON array)
+    concerns TEXT, -- נקודות לתשומת לב (JSON array)
+    
     status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'in_progress', 'completed', 'closed')),
     
     -- חיבור לסשן מקורי
@@ -56,6 +67,7 @@ CREATE TABLE match_proposals (
     
     -- תיעוד
     notes TEXT,
+    notes_history JSONB DEFAULT '[]'::jsonb, -- מערך של {content: string, created_at: string}
     contact_attempts INTEGER DEFAULT 0,
     last_contact_date TIMESTAMP WITH TIME ZONE,
     meeting_scheduled BOOLEAN DEFAULT FALSE,
@@ -161,4 +173,7 @@ $$ language 'plpgsql';
 -- טריגר לניהול סשנים
 CREATE TRIGGER manage_sessions_trigger 
     BEFORE INSERT ON matching_sessions
-    FOR EACH ROW EXECUTE FUNCTION manage_matching_sessions(); 
+    FOR EACH ROW EXECUTE FUNCTION manage_matching_sessions();
+
+-- הטבלאות הבסיסיות מספיקות לצרכים הנוכחיים
+-- ניתן להוסיף טבלאות נוספות בעתיד לפי הצורך 

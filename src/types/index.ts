@@ -226,4 +226,38 @@ export interface MatchingSettings {
     temperature: number;
     maxTokens: number;
   };
-} 
+}
+
+// ============ טיפוסים חדשים לניהול הצעות מתקדם ============
+
+// הערה פשוטה עם תאריך
+export interface ProposalNote {
+  content: string;
+  created_at: string;
+}
+
+// הצעה מורחבת עם כל הפרטים
+export interface EnhancedProposal extends MatchProposal {
+  // פרטי מועמדים מלאים
+  boyDetails?: DetailedCandidate;
+  girlDetails?: DetailedCandidate;
+  
+  // היסטוריית הערות
+  notesHistory?: ProposalNote[];
+  
+  // נתונים סטטיסטיים בסיסיים
+  daysInProcess?: number;
+  lastActivity?: string;
+}
+
+// פילטרים לטאב הצעות פעילות
+export interface ProposalsFilter {
+  status?: MatchProposal['status'][];
+  dateFrom?: string;
+  dateTo?: string;
+  sortBy?: 'created_at' | 'last_activity' | 'match_score' | 'days_in_process';
+  sortOrder?: 'asc' | 'desc';
+  searchTerm?: string; // חיפוש בשמות
+}
+
+ 
