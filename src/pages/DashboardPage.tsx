@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Heart, Users, Upload, Settings, TrendingUp, AlertTriangle, ArrowLeft, History, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { debugAuthStatus, refreshAuthToken } from '@/lib/auth'
@@ -20,10 +20,9 @@ import {
   getSessionStats,
   deleteSession,
   MatchingSession,
-  checkAuthConnection,
-  reset406ErrorCount
+  checkAuthConnection
 } from '@/lib/sessions'
-import { loadEnhancedProposals, updateProposalStatus } from '@/lib/proposals'
+import { loadEnhancedProposals } from '@/lib/proposals'
 import { EnhancedProposal, ProposalsFilter } from '@/types'
 import { ProposalCard } from '@/components/ui/ProposalCard'
 
@@ -40,6 +39,7 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
   const [activeTab, setActiveTab] = useState<TabType>('matches')
   const [accessToken, setAccessToken] = useState<string | null>(null)
   const [authStatus, setAuthStatus] = useState<'checking' | 'authenticated' | 'unauthenticated'>('checking')
+  const [shadchanId, setShadchanId] = useState<string | null>(null) // State חדש ל-shadchanId
   
   // State גלובלי לסריקת התאמות
   const [globalScanState, setGlobalScanState] = useState<{
@@ -53,13 +53,15 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
   // State למספר הצעות פעילות
   const [activeProposalsCount, setActiveProposalsCount] = useState(0)
 
+  const [candidates] = useState<{ males: DetailedCandidate[], females: DetailedCandidate[] } | null>(null)
+
   // פונקציה לטעינת מספר ההצעות הפעילות בלבד (מהירה)
-  const loadActiveProposalsCount = async () => {
+  const loadActiveProposalsCount = useCallback(async () => {
     try {
       const { data: currentProposals } = await supabase
         .from('match_proposals')
         .select('id')
-        .in('status', ['approved', 'in_progress', 'completed'])
+                                             .in('status', ['ready_for_processing', 'ready_for_contact', 'contacting', 'awaiting_response', 'schedule_meeting', 'meeting_scheduled', 'meeting_completed', 'completed', 'rejected_by_candidate', 'closed', 'in_meeting_process']) // עדכון הסטטוסים הנספרים (לא כולל pending)
       
       const count = currentProposals?.length || 0
       setActiveProposalsCount(count)
@@ -67,12 +69,9 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
     } catch (error) {
       console.error('שגיאה בטעינת מספר הצעות:', error)
     }
-  }
+  }, [])
 
   useEffect(() => {
-    // איפוס מונה שגיאות 406 בתחילת הטעינה
-    reset406ErrorCount()
-    
     // קבלת Access Token מSupabase
     const getAccessToken = async () => {
       const { data: { session } } = await supabase.auth.getSession()
@@ -98,6 +97,22 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
       
       await debugAuthStatus()
       await getAccessToken()
+
+      // אחזור shadchan_id
+      const { data: shadchanData, error: shadchanError } = await supabase
+        .from('shadchanim')
+        .select('id')
+        .eq('auth_user_id', session.user.id)
+        .single()
+
+      if (shadchanError || !shadchanData) {
+        console.error('❌ שגיאה באחזור Shadchan ID או לא נמצא: ', shadchanError)
+        // ניתן להחליט איך לטפל במצב כזה, לדוגמה להעביר למסך שגיאה או להתנתק
+        setAuthStatus('unauthenticated')
+        return
+      }
+
+      setShadchanId(shadchanData.id)
       setAuthStatus('authenticated')
       
       // טעינת מספר ההצעות הפעילות מיד בטעינת הדף
@@ -105,7 +120,7 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
     }
 
     initializeAuth()
-  }, [])
+  }, [loadActiveProposalsCount])
 
   const tabs = [
     { id: 'matches' as TabType, label: 'התאמות חדשות', icon: Heart, count: 0 },
@@ -178,11 +193,11 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
           onProposalCountChange={setActiveProposalsCount}
         />
       case 'proposals':
-        return <ProposalsTab accessToken={accessToken} onCountChange={setActiveProposalsCount} />
+        return <ProposalsTab accessToken={accessToken} onCountChange={setActiveProposalsCount} shadchanId={shadchanId} />
       case 'import':
         return <ImportTab accessToken={accessToken} />
       case 'history':
-        return <HistoryTab />
+        return <HistoryTab accessToken={accessToken} />
       case 'settings':
         return <SettingsTab accessToken={accessToken} />
       default:
@@ -407,13 +422,22 @@ const MatchesTab = ({
 
   const loadActiveSession = async () => {
     try {
+      console.log('🔄 טוען סשן פעיל...')
       const activeSession = await getActiveSession()
       if (activeSession && activeSession.session_data.length > 0) {
-        setMatches(activeSession.session_data)
-        console.log('טעון סשן פעיל עם', activeSession.session_data.length, 'התאמות')
+        // טעינת ההתאמות כמו שהן - ללא שינוי סטטוס
+        const matches: MatchProposal[] = activeSession.session_data as MatchProposal[];
+        
+        // הדפסת סטטוסים לדיבוג
+        console.log('📊 סטטוסי התאמות שנטענו:', matches.map(m => ({ id: m.id, status: m.status, names: `${m.maleName} ↔ ${m.femaleName}` })))
+        
+        setMatches(matches);
+        console.log('✅ טעון סשן פעיל עם', activeSession.session_data.length, 'התאמות')
+      } else {
+        console.log('ℹ️ אין סשן פעיל או שהוא ריק')
       }
     } catch (error) {
-      console.error('שגיאה בטעינת סשן פעיל:', error)
+      console.error('❌ שגיאה בטעינת סשן פעיל:', error)
     } finally {
       setInitialLoading(false)
     }
@@ -671,17 +695,24 @@ const MatchesTab = ({
               key={match.id} 
               match={match} 
               matches={matches}
+              accessToken={accessToken}
                               onStatusUpdate={async (matchId, newStatus) => {
                   try {
+                    console.log('🔄 מתחיל עדכון סטטוס בממשק:', { matchId, newStatus })
+                    console.log('📊 מערך התאמות נוכחי לפני עדכון:', matches.map(m => ({ id: m.id, status: m.status, names: `${m.maleName} ↔ ${m.femaleName}` })))
+                    
                     // שימוש בפונקציה המרכזית לעדכון סטטוס
                     const updatedMatches = await updateMatchStatus(matches, matchId, newStatus, onProposalCountChange)
+                    
+                    console.log('📊 מערך התאמות אחרי עדכון:', updatedMatches.map(m => ({ id: m.id, status: m.status, names: `${m.maleName} ↔ ${m.femaleName}` })))
+                    
                     setMatches(updatedMatches)
                     
                     // הודעת הצלחה לעדכון הממשק
                     console.log(`✅ עודכן סטטוס הצעה ${matchId} ל-${newStatus}`)
                     
                     // אם ההצעה אושרה, תוצג הודעה נוספת
-                    if (newStatus === 'approved') {
+                    if (newStatus === 'ready_for_processing') {
                       setTimeout(() => {
                         const infoNotification = document.createElement('div')
                         infoNotification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50'
@@ -801,7 +832,10 @@ const MatchesTab = ({
 }
 
 // פונקציית עזר לעדכון סטטוס התאמה
-const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newStatus: 'approved' | 'rejected', onProposalCountChange?: (count: number) => void) => {
+const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newStatus: 'ready_for_processing' | 'rejected', onProposalCountChange?: (count: number) => void) => {
+  console.log('🔄 מעדכן סטטוס התאמה:', { matchId, newStatus, currentMatchesLength: matches.length })
+  
+  // עדכון המערך המקומי
   const updatedMatches = matches.map(m => 
     m.id === matchId ? { ...m, status: newStatus } : m
   )
@@ -809,11 +843,26 @@ const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newS
   // שמירה מקומית
   localStorage.setItem('currentMatches', JSON.stringify(updatedMatches))
   
-  // שמירה בסשן פעיל
-  await updateActiveSession(updatedMatches)
+  // שמירה בסשן פעיל - טעינה מחדש של הסשן הפעיל לוודא שיש לנו את הנתונים העדכניים
+  try {
+    const currentActiveSession = await getActiveSession()
+    if (currentActiveSession) {
+      // עדכון רק ההתאמה הספציפית בסשן הפעיל
+      const updatedSessionData = currentActiveSession.session_data.map(m => 
+        m.id === matchId ? { ...m, status: newStatus } : m
+      )
+      
+      await updateActiveSession(updatedSessionData)
+      console.log('✅ סשן פעיל עודכן עם סטטוס חדש')
+    }
+  } catch (error) {
+    console.error('❌ שגיאה בעדכון סשן פעיל:', error)
+    // אם יש שגיאה, נשתמש בנתונים המקומיים
+    await updateActiveSession(updatedMatches)
+  }
   
   // אם אושר - העברה להצעות פעילות
-  if (newStatus === 'approved') {
+  if (newStatus === 'ready_for_processing') {
     const approvedMatch = updatedMatches.find(m => m.id === matchId)
     if (approvedMatch) {
       await moveMatchToProposals(approvedMatch)
@@ -827,7 +876,7 @@ const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newS
             const { data: currentProposals } = await supabase
               .from('match_proposals')
               .select('id')
-              .in('status', ['approved', 'in_progress', 'completed'])
+              .in('status', ['ready_for_processing', 'ready_for_contact', 'contacting', 'awaiting_response', 'meeting_scheduled', 'meeting_completed', 'completed', 'rejected_by_candidate', 'closed', 'in_meeting_process'])
             
             const newCount = currentProposals?.length || 0
             console.log('📊 נמצאו', newCount, 'הצעות פעילות, מעדכן מונה...')
@@ -844,22 +893,26 @@ const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newS
 }
 
 // רכיב טאב הצעות
-const ProposalsTab = ({ accessToken, onCountChange }: { accessToken: string | null, onCountChange: (count: number) => void }) => {
+const ProposalsTab = ({ accessToken, onCountChange, shadchanId }: { accessToken: string | null, onCountChange: (count: number) => void, shadchanId: string | null }) => {
   const [proposals, setProposals] = useState<EnhancedProposal[]>([])
   const [filteredProposals, setFilteredProposals] = useState<EnhancedProposal[]>([]) // הצעות מסוננות לתצוגה
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [selectedProposal, setSelectedProposal] = useState<EnhancedProposal | null>(null)
   const [isFirstLoad, setIsFirstLoad] = useState(true) // מציין אם זו הטעינה הראשונה
   const [searchText, setSearchText] = useState('') // טקסט החיפוש הנוכחי
   const [filter, setFilter] = useState<ProposalsFilter>({
-    status: ['approved', 'in_progress', 'completed'],
+    status: ['ready_for_processing', 'ready_for_contact', 'contacting', 'awaiting_response', 'schedule_meeting', 'meeting_scheduled', 'meeting_completed', 'completed', 'rejected_by_candidate', 'closed', 'in_meeting_process'], // עדכון הסטטוסים הכלולים בסינון (לא כולל pending)
     sortBy: 'created_at',
     sortOrder: 'desc'
   })
 
   useEffect(() => {
+    console.log('🔑 ProposalsTab useEffect triggered:', { accessToken: !!accessToken, filter })
     if (accessToken) {
       loadEnhancedProposalsData()
+    } else {
+      console.warn('⚠️ ProposalsTab: accessToken לא זמין עדיין')
     }
   }, [accessToken, filter])
 
@@ -905,22 +958,26 @@ const ProposalsTab = ({ accessToken, onCountChange }: { accessToken: string | nu
   }
 
   const loadEnhancedProposalsData = async () => {
-    if (!accessToken) return
+    if (!accessToken) {
+      console.warn('⚠️ לא ניתן לטעון הצעות ללא accessToken')
+      setError('חיבור לא זמין - נסה לרענן את הדף')
+      return
+    }
     
     try {
       setLoading(true)
+      setError(null) // נקה שגיאות קודמות
       console.log('🔄 טוען הצעות פעילות...')
+      
       const enhancedProposals = await loadEnhancedProposals(accessToken)
       console.log('📊 נטענו הצעות:', enhancedProposals.length)
       
-      // יישום פילטרים בסיסיים (ללא חיפוש טקסט)
+      // יצים פילטרים בסיסיים (ללא חיפוש טקסט)
       let filtered = enhancedProposals
       
       if (filter.status && filter.status.length > 0) {
         filtered = filtered.filter(p => filter.status!.includes(p.status))
       }
-      
-      // הסרתי את חיפוש הטקסט מכאן - זה יטופל בנפרד
       
       // מיון
       if (filter.sortBy) {
@@ -963,7 +1020,18 @@ const ProposalsTab = ({ accessToken, onCountChange }: { accessToken: string | nu
       setIsFirstLoad(false) // מעכשיו זו לא הטעינה הראשונה
       console.log('✅ מוצגות', filtered.length, 'הצעות פעילות מתוך', enhancedProposals.length, 'כולל')
     } catch (error) {
-      console.error('שגיאה בטעינת הצעות מורחבות:', error)
+      console.error('❌ שגיאה בטעינת הצעות מורחבות:', error)
+      
+      // הצגת שגיאה מפורטת בקונסול
+      let errorMessage = 'שגיאה לא צפויה בטעינת הצעות'
+      if (error instanceof Error) {
+        console.error('פרטי השגיאה:', error.message)
+        console.error('Stack trace:', error.stack)
+        errorMessage = error.message
+      }
+      
+      setError(errorMessage)
+      
       // רק במקרה של שגיאה אמיתית נאפס את המונה
       if (isFirstLoad) onCountChange(0) // רק בטעינה הראשונה נאפס במקרה של שגיאה
     } finally {
@@ -975,12 +1043,12 @@ const ProposalsTab = ({ accessToken, onCountChange }: { accessToken: string | nu
   const updateSingleProposal = async (proposalId: string) => {
     console.log('🔄 מעדכן הצעה יחידה:', proposalId)
     try {
-      // טעינת ההצעה המעודכנת מהשרת
+      // טעינת כל ההצעות מחדש כדי לקבל את הסטטוס המעודכן
       const updatedProposals = await loadEnhancedProposals(accessToken!)
       const updatedProposal = updatedProposals.find(p => p.id === proposalId)
       
       if (updatedProposal) {
-        // עדכון רק ההצעה הספציפית ברשימה הקיימת
+        // אם ההצעה עדיין קיימת ברשימת הפעילות - עדכון רק ההצעה הספציפית
         setProposals(prevProposals => {
           const newProposals = prevProposals.map(p => 
             p.id === proposalId ? updatedProposal : p
@@ -989,6 +1057,14 @@ const ProposalsTab = ({ accessToken, onCountChange }: { accessToken: string | nu
           return newProposals
         })
         console.log('✅ הצעה עודכנה בהצלחה:', proposalId)
+      } else {
+        // אם ההצעה לא קיימת יותר ברשימת הפעילות (שינוי סטטוס) - הסרה מהרשימה
+        console.log('📤 הצעה הוסרה מרשימת הפעילות:', proposalId)
+        setProposals(prevProposals => {
+          const newProposals = prevProposals.filter(p => p.id !== proposalId)
+          onCountChange(newProposals.length) // עדכון המונה
+          return newProposals
+        })
       }
     } catch (error) {
       console.error('❌ שגיאה בעדכון הצעה יחידה:', error)
@@ -1003,6 +1079,24 @@ const ProposalsTab = ({ accessToken, onCountChange }: { accessToken: string | nu
 
   return (
     <div>
+      {/* הצגת שגיאה אם יש */}
+      {error && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div className="flex items-center gap-3">
+            <div className="text-red-600">⚠️</div>
+            <div className="flex-1">
+              <h3 className="text-red-800 font-medium">שגיאה בטעינת הצעות</h3>
+              <p className="text-red-700 text-sm mt-1">{error}</p>
+            </div>
+            <button
+              onClick={loadEnhancedProposalsData}
+              className="bg-red-100 hover:bg-red-200 text-red-800 px-3 py-1 rounded text-sm transition-colors"
+            >
+              נסה שוב
+            </button>
+          </div>
+        </div>
+      )}
       {/* כותרת וסינון */}
       <div className="flex justify-between items-center mb-6">
         <div className="flex items-center gap-3">
@@ -1010,6 +1104,13 @@ const ProposalsTab = ({ accessToken, onCountChange }: { accessToken: string | nu
           <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-medium">
             {proposals.length} הצעות
           </span>
+          <button
+            onClick={loadEnhancedProposalsData}
+            className="text-gray-500 hover:text-blue-600 transition-colors"
+            title="רענן הצעות"
+          >
+            🔄
+          </button>
         </div>
         
         {/* פילטרים בסיסיים */}
@@ -1066,10 +1167,16 @@ const ProposalsTab = ({ accessToken, onCountChange }: { accessToken: string | nu
         <div className="text-center py-12">
           <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">אין הצעות פעילות</h3>
-          <p className="text-gray-600">
+          <p className="text-gray-600 mb-4">
             כאן יופיעו ההצעות שאישרת ונמצאות בתהליך מעקב.<br/>
             אשר הצעות מהטאב "התאמות חדשות" כדי לראות אותן כאן.
           </p>
+          <button
+            onClick={loadEnhancedProposalsData}
+            className="text-blue-600 hover:text-blue-800 underline"
+          >
+            רענן הצעות
+          </button>
         </div>
       ) : (
         <div className="space-y-4">
@@ -1077,8 +1184,11 @@ const ProposalsTab = ({ accessToken, onCountChange }: { accessToken: string | nu
             <ProposalCard
               key={proposal.id}
               proposal={proposal}
-              onUpdate={() => updateSingleProposal(proposal.id)}
+              onUpdate={async () => {
+                await updateSingleProposal(proposal.id)
+              }}
               onViewProfiles={setSelectedProposal}
+              shadchanId={shadchanId!} // העברת shadchanId ל-ProposalCard
             />
           ))}
         </div>
@@ -1097,7 +1207,7 @@ const ProposalsTab = ({ accessToken, onCountChange }: { accessToken: string | nu
 }
 
 // רכיב טאב היסטוריה
-const HistoryTab = () => {
+const HistoryTab = ({ accessToken }: { accessToken: string | null }) => {
   const [sessions, setSessions] = useState<MatchingSession[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedSession, setSelectedSession] = useState<MatchingSession | null>(null)
@@ -1196,6 +1306,7 @@ const HistoryTab = () => {
               key={match.id} 
               match={match} 
               matches={selectedSession.session_data}
+              accessToken={accessToken}
                              onStatusUpdate={async (matchId, newStatus) => {
                  try {
                    // עדכון local state מיידי
@@ -1213,7 +1324,7 @@ const HistoryTab = () => {
                    await updateSpecificSession(selectedSession.id, updatedMatches)
                    
                    // אם אושר - העברה להצעות פעילות
-                   if (newStatus === 'approved') {
+                   if (newStatus === 'ready_for_processing') {
                      const approvedMatch = updatedMatches.find(m => m.id === matchId)
                      if (approvedMatch) {
                        await moveMatchToProposals(approvedMatch)
@@ -1224,7 +1335,7 @@ const HistoryTab = () => {
                    console.log(`✅ עודכן סטטוס הצעה ${matchId} ל-${newStatus} בהיסטוריה`)
                    
                    // אם ההצעה אושרה, תוצג הודעה נוספת
-                   if (newStatus === 'approved') {
+                   if (newStatus === 'ready_for_processing') {
                      setTimeout(() => {
                        const infoNotification = document.createElement('div')
                        infoNotification.className = 'fixed top-4 right-4 bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg z-50'
@@ -1246,7 +1357,7 @@ const HistoryTab = () => {
                    setSelectedSession({
                      ...selectedSession,
                      session_data: selectedSession.session_data.map(m => 
-                       m.id === matchId ? { ...m, status: originalMatch?.status || 'pending' } : m
+                       m.id === matchId ? { ...m, status: originalMatch?.status || 'ready_for_processing' } : m
                      )
                    })
                    
@@ -1368,7 +1479,7 @@ const HistoryTab = () => {
 }
 
 // רכיב טאב ייבוא
-const ImportTab = ({ accessToken }: { accessToken: string | null }) => {
+const ImportTab: React.FC<{ accessToken: string | null }> = ({ accessToken }) => {
   const [loading, setLoading] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
   const [candidates, setCandidates] = useState<{ males: DetailedCandidate[], females: DetailedCandidate[] } | null>(null)
@@ -1424,7 +1535,7 @@ const ImportTab = ({ accessToken }: { accessToken: string | null }) => {
         return
       }
 
-      const data = await loadCandidatesFromSheet(accessToken, sheetId)
+      const data = await loadCandidatesFromSheet(accessToken!, sheetId)
       
       // שמירת הנתונים ב-localStorage
       localStorage.setItem('importedCandidates', JSON.stringify(data))
@@ -1768,10 +1879,11 @@ const SettingsTab = ({ accessToken }: { accessToken: string | null }) => {
 }
 
 // רכיב להצגת הצעת התאמה משופרת
-const MatchCard = ({ match, matches, onStatusUpdate }: { 
+const MatchCard = ({ match, matches, onStatusUpdate, accessToken }: { 
   match: MatchProposal, 
   matches: MatchProposal[],
-  onStatusUpdate?: (matchId: string, newStatus: 'approved' | 'rejected') => void 
+  onStatusUpdate?: (matchId: string, newStatus: 'ready_for_processing' | 'rejected') => void,
+  accessToken: string | null
 }) => {
   const [showProfilesModal, setShowProfilesModal] = useState(false)
   const [candidatesData, setCandidatesData] = useState<{
@@ -1783,18 +1895,98 @@ const MatchCard = ({ match, matches, onStatusUpdate }: {
   // טעינת נתוני המועמדים המלאים
   const loadCandidateProfiles = async () => {
     try {
-      console.log('נתוני הצעה מלאים:', match)
-      console.log('boy_data:', match.boy_data)
-      console.log('girl_data:', match.girl_data)
+      console.log('🔍 טוען נתוני מועמדים מהגיליון בזמן אמת...')
       
+      if (!accessToken) {
+        console.error('❌ אין access token זמין')
+        setCandidatesData({
+          maleProfile: match.boy_data || null,
+          femaleProfile: match.girl_data || null
+        })
+        setShowProfilesModal(true)
+        return
+      }
+
+      // קבלת מזהה הגיליון
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        console.error('❌ משתמש לא מחובר')
+        return
+      }
+
+      const { data: shadchan } = await supabase
+        .from('shadchanim')
+        .select('google_sheet_id')
+        .eq('auth_user_id', user.id)
+        .single()
+
+      if (!shadchan?.google_sheet_id) {
+        console.error('❌ לא נמצא מזהה גיליון')
+        // שימוש בנתונים הישנים
+        setCandidatesData({
+          maleProfile: match.boy_data || null,
+          femaleProfile: match.girl_data || null
+        })
+        setShowProfilesModal(true)
+        return
+      }
+
+      // טעינת נתונים מהגיליון
+      const { loadCandidatesFromSheet } = await import('@/lib/google-sheets')
+      const candidatesData = await loadCandidatesFromSheet(accessToken, shadchan.google_sheet_id)
+      
+             // חיפוש המועמדים הספציפיים
+       const boyDetails = candidatesData.males.find(m => m.id === match.boy_row_id)
+       const girlDetails = candidatesData.females.find(f => f.id === match.girl_row_id)
+
+      console.log('✅ נתונים מהגיליון נטענו:', {
+        boyFound: !!boyDetails,
+        girlFound: !!girlDetails,
+        boyName: boyDetails?.name || 'לא נמצא',
+        girlName: girlDetails?.name || 'לא נמצא'
+      })
+
+      // השוואה בין נתונים ישנים לחדשים
+      if (boyDetails && match.boy_data) {
+        console.log('🔄 השוואת נתוני בן:', {
+          'שם (ישן)': match.boy_data.name,
+          'שם (חדש)': boyDetails.name,
+          'מייל (ישן)': match.boy_data.email || 'ריק',
+          'מייל (חדש)': boyDetails.email || 'ריק',
+          'טלפון (ישן)': match.boy_data.phone || 'ריק',
+          'טלפון (חדש)': boyDetails.phone || 'ריק'
+        })
+      }
+
+      if (girlDetails && match.girl_data) {
+        console.log('🔄 השוואת נתוני בת:', {
+          'שם (ישן)': match.girl_data.name,
+          'שם (חדש)': girlDetails.name,
+          'מייל (ישן)': match.girl_data.email || 'ריק',
+          'מייל (חדש)': girlDetails.email || 'ריק',
+          'טלפון (ישן)': match.girl_data.phone || 'ריק',
+          'טלפון (חדש)': girlDetails.phone || 'ריק'
+        })
+      }
+
+      // שימוש בנתונים המעודכנים מהגיליון, או נתונים ישנים כגיבוי
+      setCandidatesData({
+        maleProfile: boyDetails || match.boy_data || null,
+        femaleProfile: girlDetails || match.girl_data || null
+      })
+      
+      setShowProfilesModal(true)
+    } catch (error) {
+      console.error('שגיאה בטעינת פרופילי המועמדים:', error)
+      
+      // במקרה של שגיאה - שימוש בנתונים הישנים
+      console.log('🔄 משתמש בנתונים הישנים כגיבוי')
       setCandidatesData({
         maleProfile: match.boy_data || null,
         femaleProfile: match.girl_data || null
       })
       
       setShowProfilesModal(true)
-    } catch (error) {
-      console.error('שגיאה בטעינת פרופילי המועמדים:', error)
     }
   }
 
@@ -1818,7 +2010,7 @@ const MatchCard = ({ match, matches, onStatusUpdate }: {
       
       // עדכון הסטטוס - נקרא רק ל-onStatusUpdate שיטפל בהכל
       if (onStatusUpdate) {
-        await onStatusUpdate(match.id, 'approved')
+        await onStatusUpdate(match.id, 'ready_for_processing')
       }
       
       // הודעת הצלחה
@@ -1950,12 +2142,12 @@ const MatchCard = ({ match, matches, onStatusUpdate }: {
         </div>
         <div className="text-left">
           <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-            match.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-            match.status === 'approved' ? 'bg-green-100 text-green-800' :
-            'bg-red-100 text-red-800'
+            match.status === 'ready_for_processing' ? 'bg-yellow-100 text-yellow-800' :
+            match.status === 'rejected' ? 'bg-red-100 text-red-800' :
+            'bg-gray-100 text-gray-800' // סטטוס ברירת מחדל
           }`}>
-            {match.status === 'pending' ? 'ממתין' : 
-             match.status === 'approved' ? 'אושר' : 'נדחה'}
+            {match.status === 'ready_for_processing' ? 'ממתינה לתחילת טיפול' :
+                                     match.status === 'rejected' ? 'נדחתה' : 'התאמה חדשה'} {/* עדכון טקסט תצוגה */}
           </span>
         </div>
       </div>
@@ -2004,12 +2196,12 @@ const MatchCard = ({ match, matches, onStatusUpdate }: {
             👥 צפה בפרופילים
         </Button>
           
-          {match.status === 'pending' && (
+          {match.status !== 'rejected' && match.status !== 'ready_for_processing' && (
             <>
               <Button 
                 size="sm" 
                 className="bg-green-600 hover:bg-green-700 disabled:opacity-50"
-                onClick={handleApprove}
+                onClick={handleApprove} // ישנה את הסטטוס ל-ready_for_processing
                 disabled={isProcessing}
               >
                 {isProcessing ? '⏳ מעבד...' : '✅ אישור הצעה'}
@@ -2026,9 +2218,9 @@ const MatchCard = ({ match, matches, onStatusUpdate }: {
             </>
           )}
           
-          {match.status === 'approved' && (
+          {match.status === 'ready_for_processing' && (
             <span className="text-sm text-green-600 font-medium px-3 py-2 bg-green-50 rounded">
-              ✅ ההצעה אושרה - מועברת להצעות פעילות
+              ✅ ממתינה לתחילת טיפול - מועברת להצעות פעילות
             </span>
           )}
           
@@ -2063,6 +2255,28 @@ const ProfilesModal = ({
   onClose: () => void 
 }) => {
   const renderProfile = (profile: any, title: string) => {
+    // דיבוג פרטי מועמד בחלון הפרטים
+    console.log(`🔍 דיבוג פרטי מועמד בחלון הפרטים - ${title}:`, {
+      profileObject: profile,
+      profileType: typeof profile,
+      profileKeys: profile ? Object.keys(profile) : [],
+      emailField: profile?.email || 'ריק',
+      phoneField: profile?.phone || 'ריק',
+      contactField: profile?.contact || 'ריק',
+      previouslyProposedField: profile?.previouslyProposed || 'ריק',
+      currentlyProposedField: profile?.currentlyProposed || 'ריק',
+      allFieldsWithValues: profile ? Object.entries(profile).filter(([key, value]) => value && value !== '').map(([key, value]) => `${key}: ${value}`) : [],
+      searchForEmailPattern: profile ? Object.entries(profile).filter(([key, value]) => value && typeof value === 'string' && value.includes('@')).map(([key, value]) => `${key}: ${value}`) : [],
+      // דיבוג נוסף - איפה פותחים את החלון
+      callerInfo: {
+        isFromEnhancedProposal: profile?.id?.includes('male_') || profile?.id?.includes('female_'),
+        isFromMatchData: profile?.boy_data !== undefined || profile?.girl_data !== undefined,
+        profileIdFormat: profile?.id,
+        // בדיקה אם זה מהטאב הצעות פעילות או התאמות חדשות
+        likelySource: profile?.id?.includes('male_') || profile?.id?.includes('female_') ? 'נטען מהגיליון (הצעות פעילות)' : 'נשמר בסשן (התאמות חדשות)'
+      }
+    })
+
     if (!profile) {
       return (
         <div className="text-center py-8 text-gray-500">
@@ -2078,6 +2292,10 @@ const ProfilesModal = ({
         <div className="max-h-[60vh] overflow-y-auto space-y-4">
           {/* נתונים בסיסיים */}
           <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <span className="font-medium text-gray-600">מזהה מספרי:</span>
+              <span className="mr-2">{profile.id || 'לא צוין'}</span>
+            </div>
             <div>
               <span className="font-medium text-gray-600">שם:</span>
               <span className="mr-2">{profile.name || 'לא צוין'}</span>
@@ -2099,7 +2317,7 @@ const ProfilesModal = ({
               <span className="mr-2">{profile.preferredAgeRange || 'לא צוין'}</span>
             </div>
             <div>
-              <span className="font-medium text-gray-600">עיר:</span>
+              <span className="font-medium text-gray-600">מקום מגורים:</span>
               <span className="mr-2">{profile.location || profile.city || 'לא צוין'}</span>
             </div>
             <div>
@@ -2107,7 +2325,7 @@ const ProfilesModal = ({
               <span className="mr-2">{profile.sector || 'לא צוין'}</span>
             </div>
             <div>
-              <span className="font-medium text-gray-600">פתוח למגזרים אחרים:</span>
+              <span className="font-medium text-gray-600">האם פתוחה להצעות בסטטוס או עדה אחרת?:</span>
               <span className="mr-2">{profile.openToOtherSectors || 'לא צוין'}</span>
             </div>
             <div>
@@ -2119,7 +2337,7 @@ const ProfilesModal = ({
               <span className="mr-2">{profile.religiousLevel || 'לא צוין'}</span>
             </div>
             <div>
-              <span className="font-medium text-gray-600">זרם דתי:</span>
+              <span className="font-medium text-gray-600">השתייכות לזרם דתי:</span>
               <span className="mr-2">{profile.religiousStream || 'לא צוין'}</span>
             </div>
             <div>
@@ -2131,7 +2349,7 @@ const ProfilesModal = ({
               <span className="mr-2">{profile.profession || 'לא צוין'}</span>
             </div>
             <div>
-              <span className="font-medium text-gray-600">שפות:</span>
+              <span className="font-medium text-gray-600">שפות מדוברות:</span>
               <span className="mr-2">{profile.languages || 'לא צוין'}</span>
             </div>
             <div>
@@ -2139,7 +2357,7 @@ const ProfilesModal = ({
               <span className="mr-2">{profile.height || 'לא צוין'}</span>
             </div>
             <div>
-              <span className="font-medium text-gray-600">מראה:</span>
+              <span className="font-medium text-gray-600">מראה חיצוני:</span>
               <span className="mr-2">{profile.appearance || 'לא צוין'}</span>
             </div>
             <div>
@@ -2151,15 +2369,15 @@ const ProfilesModal = ({
               <span className="mr-2">{profile.smoking || 'לא צוין'}</span>
             </div>
             <div>
-              <span className="font-medium text-gray-600">אחים:</span>
+              <span className="font-medium text-gray-600">מספר אחים ואחיות:</span>
               <span className="mr-2">{profile.siblings || 'לא צוין'}</span>
             </div>
             <div>
-              <span className="font-medium text-gray-600">מקום בסדר הלידה:</span>
+              <span className="font-medium text-gray-600">סדר לידה במשפחה:</span>
               <span className="mr-2">{profile.birthOrder || 'לא צוין'}</span>
             </div>
             <div>
-              <span className="font-medium text-gray-600">שימוש באינטרנט:</span>
+              <span className="font-medium text-gray-600">שימוש באינטרנט ורשתות חברתית:</span>
               <span className="mr-2">{profile.internetUsage || 'לא צוין'}</span>
             </div>
           </div>
@@ -2168,28 +2386,28 @@ const ProfilesModal = ({
           <div className="space-y-3">
             {profile.aboutMe && (
               <div>
-                <span className="font-medium text-gray-600">קצת עליי:</span>
+                <span className="font-medium text-gray-600">כמה משפטים על עצמי:</span>
                 <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.aboutMe}</p>
               </div>
             )}
 
             {profile.lookingFor && (
               <div>
-                <span className="font-medium text-gray-600">מחפש/ת:</span>
+                <span className="font-medium text-gray-600">כמה משפטים על מה אני מחפש:</span>
                 <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.lookingFor}</p>
               </div>
             )}
 
             {profile.importantQualities && (
               <div>
-                <span className="font-medium text-gray-600">תכונות חשובות לי:</span>
+                <span className="font-medium text-gray-600">דברים שחשובים לי שיהיו בבן/ת זוגי:</span>
                 <p className="text-gray-700 mt-1 bg-blue-50 p-2 rounded">{profile.importantQualities}</p>
               </div>
             )}
 
             {profile.hobbies && (
               <div>
-                <span className="font-medium text-gray-600">תחביבים ועניינים:</span>
+                <span className="font-medium text-gray-600">תחביבים:</span>
                 <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.hobbies}</p>
               </div>
             )}
@@ -2203,7 +2421,7 @@ const ProfilesModal = ({
 
             {profile.personality && (
               <div>
-                <span className="font-medium text-gray-600">אישיות:</span>
+                <span className="font-medium text-gray-600">מאפייני אישיות:</span>
                 <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.personality}</p>
               </div>
             )}
@@ -2217,91 +2435,66 @@ const ProfilesModal = ({
 
             {profile.flexibility && (
               <div>
-                <span className="font-medium text-gray-600">גמישות:</span>
+                <span className="font-medium text-gray-600">גמישות לשינויים:</span>
                 <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.flexibility}</p>
               </div>
             )}
 
             {profile.educationViews && (
               <div>
-                <span className="font-medium text-gray-600">השקפה על חינוך:</span>
+                <span className="font-medium text-gray-600">השקפתך בנושא חינוך ילדים:</span>
                 <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.educationViews}</p>
-              </div>
-            )}
-
-            {profile.familyBackground && (
-              <div>
-                <span className="font-medium text-gray-600">רקע משפחתי:</span>
-                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.familyBackground}</p>
-              </div>
-            )}
-
-            {profile.additionalNotes && (
-              <div>
-                <span className="font-medium text-gray-600">הערות נוספות:</span>
-                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.additionalNotes}</p>
-              </div>
-            )}
-
-            {profile.notes && (
-              <div>
-                <span className="font-medium text-gray-600">הערות:</span>
-                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.notes}</p>
               </div>
             )}
 
             {profile.dealBreakers && (
               <div>
-                <span className="font-medium text-gray-600">דרישות מהותיות (דיל ברייקרס):</span>
-                <p className="text-red-700 mt-1 bg-red-50 p-2 rounded border border-red-200 font-medium">{profile.dealBreakers}</p>
+                <span className="font-medium text-gray-600">דברים שחשובים לי שלא יהיו בבן/ת זוגי:</span>
+                <p className="text-gray-700 mt-1 bg-red-50 p-2 rounded">{profile.dealBreakers}</p>
+              </div>
+            )}
+            
+            {profile.additionalNotes && (
+              <div>
+                <span className="font-medium text-gray-600">העדפות נוספות/הערות:</span>
+                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.additionalNotes}</p>
               </div>
             )}
 
             {profile.contact && (
               <div>
-                <span className="font-medium text-gray-600">פרטי קשר:</span>
-                <p className="text-gray-700 mt-1 bg-green-50 p-2 rounded">{profile.contact}</p>
+                <span className="font-medium text-gray-600">איך ליצור קשר:</span>
+                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.contact}</p>
               </div>
             )}
 
             {profile.currentlyProposed && (
               <div>
-                <span className="font-medium text-gray-600">הצעות נוכחיות:</span>
-                <p className="text-gray-700 mt-1 bg-yellow-50 p-2 rounded">{profile.currentlyProposed}</p>
+                <span className="font-medium text-gray-600">מוצע עכשיו:</span>
+                <p className="text-gray-700 mt-1 bg-green-50 p-2 rounded">{profile.currentlyProposed}</p>
               </div>
             )}
 
             {profile.previouslyProposed && (
               <div>
-                <span className="font-medium text-gray-600">הצעות קודמות:</span>
-                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.previouslyProposed}</p>
+                <span className="font-medium text-gray-600">הוצעו בעבר:</span>
+                <p className="text-gray-700 mt-1 bg-yellow-50 p-2 rounded">{profile.previouslyProposed}</p>
               </div>
             )}
 
-            {/* הצגת שדות דינמיים נוספים */}
-            {Object.entries(profile).map(([key, value]) => {
-              // דילוג על שדות שכבר הוצגו
-              if (['id', 'name', 'age', 'birthDate', 'maritalStatus', 'preferredAgeRange', 'sector', 'openToOtherSectors', 'location', 'city', 'community', 'edah', 
-                   'religiousLevel', 'religiousStream', 'education', 'profession', 'languages', 'height', 
-                   'appearance', 'dressStyle', 'smoking', 'siblings', 'birthOrder', 'internetUsage',
-                   'aboutMe', 'lookingFor', 'importantQualities', 'hobbies', 'valuesAndBeliefs', 
-                   'personality', 'lifestyle', 'flexibility', 'educationViews', 'familyBackground',
-                   'additionalNotes', 'notes', 'dealBreakers', 'contact', 'currentlyProposed', 
-                   'previouslyProposed'].includes(key)) {
-                return null
-              }
+            {profile.email && (
+              <div>
+                <span className="font-medium text-gray-600">כתובת מייל ליצירת קשר:</span>
+                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.email}</p>
+              </div>
+            )}
 
-              // הצגת שדות נוספים שיש בהם תוכן
-              if (value && typeof value === 'string' && value.trim()) {
-                return (
-                  <div key={key}>
-                    <span className="font-medium text-gray-600">{key}:</span>
-                    <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{value}</p>
-                  </div>
-                )
-              }
-              return null
-            })}
+            {profile.phone && (
+              <div>
+                <span className="font-medium text-gray-600">טלפון ליצירת קשר:</span>
+                <p className="text-gray-700 mt-1 bg-gray-50 p-2 rounded">{profile.phone}</p>
+              </div>
+            )}
           </div>
         </div>
       </div>

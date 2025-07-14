@@ -60,7 +60,7 @@ CREATE TABLE match_proposals (
     strengths TEXT, -- נקודות חוזק (JSON array)
     concerns TEXT, -- נקודות לתשומת לב (JSON array)
     
-    status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'in_progress', 'completed', 'closed')),
+    status TEXT DEFAULT 'ready_for_processing' CHECK (status IN ('ready_for_processing', 'rejected', 'in_meeting_process', 'ready_for_contact', 'contacting', 'awaiting_response', 'rejected_by_candidate', 'schedule_meeting', 'meeting_scheduled', 'meeting_completed', 'completed', 'closed')),
     
     -- חיבור לסשן מקורי
     original_session_id UUID REFERENCES matching_sessions(id),
@@ -76,9 +76,27 @@ CREATE TABLE match_proposals (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     
-    -- מניעת כפילויות
-    UNIQUE(shadchan_id, boy_row_id, girl_row_id)
+          -- מניעת כפילויות
+      UNIQUE(shadchan_id, boy_row_id, girl_row_id)
 );
+
+-- הוספת עמודות לתמיכה בזרימת הצעות מתקדמת
+ALTER TABLE match_proposals 
+ADD COLUMN IF NOT EXISTS boy_contacted BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS girl_contacted BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS boy_response TEXT CHECK (boy_response IN ('pending', 'interested', 'not_interested', 'needs_time')),
+ADD COLUMN IF NOT EXISTS girl_response TEXT CHECK (girl_response IN ('pending', 'interested', 'not_interested', 'needs_time')),
+ADD COLUMN IF NOT EXISTS contact_method TEXT CHECK (contact_method IN ('email', 'whatsapp', 'phone', 'mixed')),
+ADD COLUMN IF NOT EXISTS rejection_reason TEXT,
+ADD COLUMN IF NOT EXISTS rejection_side TEXT CHECK (rejection_side IN ('boy', 'girl', 'both', 'shadchan'));
+
+-- עדכון סוגי הסטטוס
+ALTER TABLE match_proposals 
+DROP CONSTRAINT IF EXISTS match_proposals_status_check;
+
+ALTER TABLE match_proposals 
+ADD CONSTRAINT match_proposals_status_check 
+CHECK (status IN ('ready_for_processing', 'rejected', 'in_meeting_process', 'ready_for_contact', 'contacting', 'awaiting_response', 'rejected_by_candidate', 'schedule_meeting', 'meeting_scheduled', 'meeting_completed', 'completed', 'closed'));
 
 -- טבלת דחיות (למניעת הצעות חוזרות)
 CREATE TABLE rejections (
@@ -100,6 +118,68 @@ CREATE TABLE activity_log (
     details JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- טבלת פעולות יצירת קשר (חדש!)
+CREATE TABLE IF NOT EXISTS contact_actions (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  proposal_id UUID NOT NULL REFERENCES match_proposals(id) ON DELETE CASCADE,
+  candidate_side TEXT NOT NULL CHECK (candidate_side IN ('boy', 'girl')),
+  contact_method TEXT NOT NULL CHECK (contact_method IN ('email', 'whatsapp', 'phone')),
+  contact_details TEXT NOT NULL, -- מייל או טלפון
+  message_content TEXT,
+  contacted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  response TEXT CHECK (response IN ('pending', 'interested', 'not_interested', 'needs_time')),
+  response_date TIMESTAMP WITH TIME ZONE,
+  notes TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- אינדקסים לטבלת פעולות קשר
+CREATE INDEX IF NOT EXISTS idx_contact_actions_proposal_id ON contact_actions(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_contact_actions_candidate_side ON contact_actions(candidate_side);
+CREATE INDEX IF NOT EXISTS idx_contact_actions_contacted_at ON contact_actions(contacted_at);
+
+-- מדיניות אבטחה לטבלת פעולות קשר
+ALTER TABLE contact_actions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view their own contact actions" ON contact_actions
+  FOR SELECT USING (
+    proposal_id IN (
+      SELECT id FROM match_proposals 
+      WHERE shadchan_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can insert their own contact actions" ON contact_actions
+  FOR INSERT WITH CHECK (
+    proposal_id IN (
+      SELECT id FROM match_proposals 
+      WHERE shadchan_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can update their own contact actions" ON contact_actions
+  FOR UPDATE USING (
+    proposal_id IN (
+      SELECT id FROM match_proposals 
+      WHERE shadchan_id = auth.uid()
+    )
+  );
+
+-- תפקיד אוטומטי לעדכון updated_at
+CREATE OR REPLACE FUNCTION update_contact_actions_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_contact_actions_updated_at
+  BEFORE UPDATE ON contact_actions
+  FOR EACH ROW
+  EXECUTE FUNCTION update_contact_actions_updated_at();
 
 -- הגדרת RLS (Row Level Security)
 ALTER TABLE shadchanim ENABLE ROW LEVEL SECURITY;

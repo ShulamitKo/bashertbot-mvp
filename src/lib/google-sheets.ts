@@ -1,5 +1,4 @@
 import axios from 'axios'
-import { Candidate } from '@/types'
 
 // פונקציות עבודה עם Google Sheets API
 
@@ -31,7 +30,7 @@ export async function getSheetTabs(spreadsheetId: string, accessToken: string): 
     const data: SheetResponse = response.data
     return data.sheets?.map(sheet => sheet.properties.title) || []
   } catch (error) {
-    console.error('שגיאה בקבלת טאבי הגיליון:', error)
+    // console.error('שגיאה בקבלת טאבי הגיליון:', error)
     throw new Error('לא ניתן לגשת לגיליון. בדוק את ההרשאות.')
   }
 }
@@ -56,44 +55,9 @@ export async function getSheetData(
     const data: SheetData = response.data
     return data.values || []
   } catch (error) {
-    console.error('שגיאה בקבלת נתוני הגיליון:', error)
+    // console.error('שגיאה בקבלת נתוני הגיליון:', error)
     throw new Error('לא ניתן לקרוא נתונים מהגיליון')
   }
-}
-
-// המרת נתוני גיליון למועמדים
-export function parseSheetToCandidates(sheetData: string[][], gender: 'male' | 'female'): Candidate[] {
-  if (sheetData.length < 2) {
-    return []
-  }
-
-  const headers = sheetData[0]
-  const rows = sheetData.slice(1)
-
-  return rows.map((row, index) => {
-    const candidate: Candidate = {
-      rowId: `${gender}_${index + 2}`, // שורה 2 ואילך (שורה 1 זה כותרות)
-      name: row[0] || '',
-      age: parseInt(row[1]) || 0,
-      city: row[2] || '',
-      edah: row[3] || '',
-      education: row[4] || '',
-      profession: row[5] || '',
-      familyBackground: row[6] || '',
-      lookingFor: row[7] || '',
-      notes: row[8] || '',
-      status: (row[9] as any) || 'זמין'
-    }
-
-    // הוספת שדות נוספים לפי הכותרות
-    headers.forEach((header, colIndex) => {
-      if (colIndex > 9 && row[colIndex]) {
-        candidate[header] = row[colIndex]
-      }
-    })
-
-    return candidate
-  }).filter(candidate => candidate.name.trim() !== '') // סינון שורות ריקות
 }
 
 // עדכון סטטוס בגיליון
@@ -127,7 +91,7 @@ export async function updateCandidateStatus(
 
     return true
   } catch (error) {
-    console.error('שגיאה בעדכון סטטוס:', error)
+    // console.error('שגיאה בעדכון סטטוס:', error)
     return false
   }
 }
@@ -139,14 +103,14 @@ export async function validateSheetStructure(
   accessToken: string
 ): Promise<{ isValid: boolean, errors: string[] }> {
   try {
-    const data = await getSheetData(spreadsheetId, sheetName, accessToken, 'A1:J1')
+    const data = await getSheetData(spreadsheetId, sheetName, accessToken, 'A1:AK1')
     
     if (data.length === 0) {
       return { isValid: false, errors: ['הגיליון ריק'] }
     }
 
     const headers = data[0]
-    const requiredHeaders = ['שם', 'גיל', 'עיר', 'עדה', 'השכלה', 'מקצוע', 'רקע משפחתי', 'מחפש/ת', 'הערות', 'סטטוס']
+    const requiredHeaders = ['מזהה מספרי', 'שם', 'תאריך לידה', 'גיל', 'טווח גיל מועדף', 'מצב משפחתי', 'האם פתוחה להצעות בסטטוס או עדה אחרת?', 'מגזר', 'עדה', 'רמה דתית', 'השתייכות לזרם דתי', 'מספר אחים ואחיות', 'סדר לידה במשפחה', 'מקום מגורים', 'השכלה', 'מקצוע', 'שפות מדוברות', 'גובה', 'מראה חיצוני', 'סגנון לבוש', 'עישון', 'תחביבים', 'ערכים ואמונות', 'מאפייני אישיות', 'סגנון חיים', 'גמישות לשינויים', 'שימוש באינטרנט ורשתות חברתית', 'השקפתך בנושא חינוך ילדים', 'כמה משפטים על עצמי', 'כמה משפטים על מה אני מחפש', 'דברים שחשובים לי שיהיו בבן/ת זוגי', 'דברים שחשובים לי שלא יהיו בבן/ת זוגי', 'העדפות נוספות/הערות', 'מוצע עכשיו', 'הוצעו בעבר', 'כתובת מייל ליצירת קשר', 'טלפון ליצירת קשר']
     const errors: string[] = []
 
     requiredHeaders.forEach((requiredHeader, index) => {
@@ -155,7 +119,7 @@ export async function validateSheetStructure(
       }
     })
 
-    return {
+    return { 
       isValid: errors.length === 0,
       errors
     }
@@ -165,36 +129,6 @@ export async function validateSheetStructure(
       errors: ['לא ניתן לגשת לגיליון או לקרוא ממנו']
     }
   }
-}
-
-// טעינת מועמדים מכל הטאבים
-export async function loadAllCandidates(
-  spreadsheetId: string,
-  boysSheetName: string,
-  girlsSheetName: string,
-  accessToken: string
-): Promise<{ boys: Candidate[], girls: Candidate[], errors: string[] }> {
-  const errors: string[] = []
-  let boys: Candidate[] = []
-  let girls: Candidate[] = []
-
-  try {
-    // טעינת בנים
-    const boysData = await getSheetData(spreadsheetId, boysSheetName, accessToken)
-    boys = parseSheetToCandidates(boysData, 'male')
-  } catch (error) {
-    errors.push(`שגיאה בטעינת טאב הבנים: ${error}`)
-  }
-
-  try {
-    // טעינת בנות
-    const girlsData = await getSheetData(spreadsheetId, girlsSheetName, accessToken)
-    girls = parseSheetToCandidates(girlsData, 'female')
-  } catch (error) {
-    errors.push(`שגיאה בטעינת טאב הבנות: ${error}`)
-  }
-
-  return { boys, girls, errors }
 }
 
 // הגדרת מבנה המועמד על פי הגיליון החדש
@@ -232,75 +166,203 @@ export interface DetailedCandidate {
   importantQualities?: string
   dealBreakers?: string
   additionalNotes?: string
-  contact?: string
+  // contact?: string // השדה הזה הוסר לפי התבנית הקבועה החדשה
   currentlyProposed?: string
   previouslyProposed?: string
+  // שדות חדשים עבור יצירת קשר
+  email?: string
+  phone?: string
 }
 
-// פונקציה לפרסור שורת מועמד לאובייקט
-const parseCandidate = (row: string[], gender: 'male' | 'female', rowIndex: number): DetailedCandidate | null => {
-  if (!row || row.length < 10) return null
+interface ColumnMapping {
+  id: number;
+  name: number;
+  birthDate: number;
+  age: number;
+  preferredAgeRange: number;
+  maritalStatus: number;
+  openToOtherSectors: number;
+  sector: number;
+  community: number;
+  religiousLevel: number;
+  religiousStream: number;
+  siblings: number;
+  birthOrder: number;
+  location: number;
+  education: number;
+  profession: number;
+  languages: number;
+  height: number;
+  appearance: number;
+  dressStyle: number;
+  smoking: number;
+  hobbies: number;
+  valuesAndBeliefs: number;
+  personality: number;
+  lifestyle: number;
+  flexibility: number;
+  internetUsage: number;
+  educationViews: number;
+  aboutMe: number;
+  lookingFor: number;
+  importantQualities: number;
+  dealBreakers: number;
+  additionalNotes: number;
+  // השדה 'contact' הוסר מכיוון שאינו מופיע בתבנית הקבועה החדשה
+  currentlyProposed: number;
+  previouslyProposed: number;
+  email: number;
+  phone: number;
+}
+
+// פונקציה עוזרת לקריאה בטוחה של ערכים מהמערך
+const safeGetValue = (row: string[], index: number): string => {
+  return row[index]?.trim() || ''
+}
+
+const safeGetNumber = (row: string[], index: number): number | undefined => {
+  const value = safeGetValue(row, index)
+  const parsed = parseInt(value)
+  return isNaN(parsed) ? undefined : parsed
+}
+
+// מיפוי עמודות דינמי לפי כותרות
+const createColumnMapping = (): ColumnMapping => {
+  // console.log('🗂️ יוצר מיפוי עמודות קבוע לפי תבנית מוגדרת מראש.')
+
+  const mapping: ColumnMapping = {
+    // שדות בסיסיים - מיקומים קבועים בתבנית החדשה
+    id: 0, // מזהה מספרי
+    name: 1, // שם
+    birthDate: 2, // תאריך לידה
+    age: 3, // גיל
+    preferredAgeRange: 4, // טווח גיל מועדף
+    maritalStatus: 5, // מצב משפחתי
+    openToOtherSectors: 6, // האם פתוחה להצעות בסטטוס או עדה אחרת?
+    sector: 7, // מגזר
+    community: 8, // עדה
+    religiousLevel: 9, // רמה דתית
+    religiousStream: 10, // השתייכות לזרם דתי
+    siblings: 11, // מספר אחים ואחיות
+    birthOrder: 12, // סדר לידה במשפחה
+    location: 13, // מקום מגורים
+    education: 14, // השכלה
+    profession: 15, // מקצוע
+    languages: 16, // שפות מדוברות
+    height: 17, // גובה
+    appearance: 18, // מראה חיצוני
+    dressStyle: 19, // סגנון לבוש
+    smoking: 20, // עישון
+    
+    // שדות טקסט מורחבים - מיקומים קבועים
+    hobbies: 21, // תחביבים
+    valuesAndBeliefs: 22, // ערכים ואמונות
+    personality: 23, // מאפייני אישיות
+    lifestyle: 24, // סגנון חיים
+    flexibility: 25, // גמישות לשינויים
+    internetUsage: 26, // שימוש באינטרנט ורשתות חברתיות
+    educationViews: 27, // השקפתך בנושא חינוך ילדים
+    aboutMe: 28, // כמה משפטים על עצמי
+    lookingFor: 29, // כמה משפטים על מה אני מחפש
+    importantQualities: 30, // דברים שחשובים לי שיהיו בבן/ת זוגי
+    dealBreakers: 31, // דברים שחשובים לי שלא יהיו בבן/ת זוגי
+    additionalNotes: 32, // העדפות נוספות/הערות
+    
+    // שדות קשר וניהול - מיקומים קבועים
+    currentlyProposed: 33, // מוצע עכשיו
+    previouslyProposed: 34, // הוצעו בעבר
+    email: 35, // כתובת מייל ליצירת קשר
+    phone: 36, // טלפון ליצירת קשר
+  }
   
-  const [
-    id, name, birthDate, age, preferredAgeRange, maritalStatus, openToOtherSectors,
-    sector, community, religiousLevel, religiousStream, siblings, birthOrder,
-    location, education, profession, languages, height, appearance, dressStyle,
-    smoking, hobbies, valuesAndBeliefs, personality, lifestyle, flexibility,
-    internetUsage, educationViews, aboutMe, lookingFor, importantQualities,
-    dealBreakers, additionalNotes, contact, currentlyProposed, previouslyProposed
-  ] = row
+  // console.log('📋 מיפוי עמודות קבוע שנוצר:')
+  // אין צורך להדפיס את הכותרות כי המיפוי קבוע לפי אינדקס
+  // console.log({
+  //   email: `עמודה ${mapping.email}`,
+  //   phone: `עמודה ${mapping.phone}`,
+  //   previouslyProposed: `עמודה ${mapping.previouslyProposed}`,
+  //   currentlyProposed: `עמודה ${mapping.currentlyProposed}`
+  // })
+  
+  return mapping
+}
+
+const parseCandidateFixed = (row: string[], _gender: 'male' | 'female', rowIndex: number, _headers: string[] = []): DetailedCandidate | null => {
+  if (!row || row.length < 5) return null
+  
+  // יצירת מיפוי קבוע
+  const cols = createColumnMapping()
+
+  // קריאת שם וגיל בסיסיים
+  const name = safeGetValue(row, cols.name)
+  const age = safeGetNumber(row, cols.age) || 0
 
   if (!name || !age) return null
 
-  // יצירת מזהה שורה נכון - שורה 2 ואילך (שורה 1 זה כותרות)
-  const actualRowId = `${gender}_${rowIndex + 2}`
-
-  return {
-    id: actualRowId, // שימוש במזהה השורה האמיתי
-    name: name.trim(),
-    birthDate,
-    age: parseInt(age) || 0,
-    preferredAgeRange,
-    maritalStatus: maritalStatus || '',
-    openToOtherSectors,
-    sector: sector || '',
-    community: community || '',
-    religiousLevel: religiousLevel || '',
-    religiousStream,
-    siblings: siblings ? parseInt(siblings) : undefined,
-    birthOrder: birthOrder ? parseInt(birthOrder) : undefined,
-    location: location || '',
-    education: education || '',
-    profession: profession || '',
-    languages,
-    height,
-    appearance,
-    dressStyle,
-    smoking,
-    hobbies,
-    valuesAndBeliefs,
-    personality,
-    lifestyle,
-    flexibility,
-    internetUsage,
-    educationViews,
-    aboutMe,
-    lookingFor,
-    importantQualities,
-    dealBreakers,
-    additionalNotes,
-    contact,
-    currentlyProposed,
-    previouslyProposed
+  // מיפוי קבוע לפי אינדקס העמודה
+  const candidate: DetailedCandidate = {
+    id: safeGetValue(row, cols.id),
+    name: name,
+    birthDate: safeGetValue(row, cols.birthDate),
+    age: age,
+    preferredAgeRange: safeGetValue(row, cols.preferredAgeRange),
+    maritalStatus: safeGetValue(row, cols.maritalStatus),
+    openToOtherSectors: safeGetValue(row, cols.openToOtherSectors),
+    sector: safeGetValue(row, cols.sector),
+    community: safeGetValue(row, cols.community),
+    religiousLevel: safeGetValue(row, cols.religiousLevel),
+    religiousStream: safeGetValue(row, cols.religiousStream),
+    siblings: safeGetNumber(row, cols.siblings),
+    birthOrder: safeGetNumber(row, cols.birthOrder),
+    location: safeGetValue(row, cols.location),
+    education: safeGetValue(row, cols.education),
+    profession: safeGetValue(row, cols.profession),
+    languages: safeGetValue(row, cols.languages),
+    height: safeGetValue(row, cols.height),
+    appearance: safeGetValue(row, cols.appearance),
+    dressStyle: safeGetValue(row, cols.dressStyle),
+    smoking: safeGetValue(row, cols.smoking),
+    hobbies: safeGetValue(row, cols.hobbies),
+    valuesAndBeliefs: safeGetValue(row, cols.valuesAndBeliefs),
+    personality: safeGetValue(row, cols.personality),
+    lifestyle: safeGetValue(row, cols.lifestyle),
+    flexibility: safeGetValue(row, cols.flexibility),
+    internetUsage: safeGetValue(row, cols.internetUsage),
+    educationViews: safeGetValue(row, cols.educationViews),
+    aboutMe: safeGetValue(row, cols.aboutMe),
+    lookingFor: safeGetValue(row, cols.lookingFor),
+    importantQualities: safeGetValue(row, cols.importantQualities),
+    dealBreakers: safeGetValue(row, cols.dealBreakers),
+    additionalNotes: safeGetValue(row, cols.additionalNotes),
+    currentlyProposed: safeGetValue(row, cols.currentlyProposed),
+    previouslyProposed: safeGetValue(row, cols.previouslyProposed),
+    email: safeGetValue(row, cols.email),
+    phone: safeGetValue(row, cols.phone)
   }
+
+  // דיבוג מתקדם - יציג את הערכים בפועל מהשדות החשובים
+  if (name && name.trim()) {
+    console.log(`🔍 דיבוג קבוע עבור ${name.trim()}:`, {
+      position: `שורה ${rowIndex + 2}`,
+      totalColumns: row.length,
+      detectedMappings: {
+        email: `עמודה ${cols.email} = "${candidate.email}"`,
+        phone: `עמודה ${cols.phone} = "${candidate.phone}"`,
+        previouslyProposed: `עמודה ${cols.previouslyProposed} = "${candidate.previouslyProposed}"`,
+        currentlyProposed: `עמודה ${cols.currentlyProposed} = "${candidate.currentlyProposed}"`
+      }
+    });
+  }
+
+  return candidate
 }
 
-// פונקציה לטעינת מועמדים מהגיליון
+// פונקציה לטעינת מועמדים מהגיליון - עם טעינת כותרות לפרסור נכון
 export const loadCandidatesFromSheet = async (
   accessToken: string, 
   spreadsheetId: string
 ): Promise<{ males: DetailedCandidate[], females: DetailedCandidate[] }> => {
-  console.log('🔄 מתחיל טעינת מועמדים מהגיליון:', spreadsheetId)
+  // console.log('🔄 מתחיל טעינת מועמדים מהגיליון:', spreadsheetId)
 
   try {
     // הגדרת headers
@@ -309,20 +371,38 @@ export const loadCandidatesFromSheet = async (
       'Content-Type': 'application/json',
     }
 
-    // טעינת בנים עם עיכוב
-    console.log('📥 טוען נתוני בנים...')
+    // טעינת כותרות בנים
+    // console.log('📥 טוען כותרות בנים...')
+    const boysHeadersResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/בנים!A1:AK1`,
+      { headers }
+    )
+
+    if (!boysHeadersResponse.ok) {
+      throw new Error(`שגיאה בטעינת כותרות בנים: ${boysHeadersResponse.status} ${boysHeadersResponse.statusText}`)
+    }
+
+    const boysHeadersData = await boysHeadersResponse.json()
+    const boysHeaders = boysHeadersData.values?.[0] || []
+
+    // המתנה בין הבקשות
+    // console.log('⏳ ממתין בין בקשות...')
+    await new Promise(resolve => setTimeout(resolve, 500))
+
+    // טעינת בנים - טווח A עד AK
+    // console.log('📥 טוען נתוני בנים...')
     const boysResponse = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/בנים!A2:AZ100`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/בנים!A2:AK100`,
       { headers }
     )
 
     if (!boysResponse.ok) {
       if (boysResponse.status === 429) {
-        console.log('⏳ Rate limit - ממתין 2 שניות...')
+        // console.log('⏳ Rate limit - ממתין 2 שניות...')
         await new Promise(resolve => setTimeout(resolve, 2000))
         // ניסיון נוסף
         const retryResponse = await fetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/בנים!A2:AZ100`,
+          `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/בנים!A2:AK100`,
           { headers }
         )
         if (!retryResponse.ok) {
@@ -337,23 +417,41 @@ export const loadCandidatesFromSheet = async (
     }
 
     // המתנה בין הבקשות
-    console.log('⏳ ממתין בין בקשות...')
+    // console.log('⏳ ממתין בין בקשות...')
+    await new Promise(resolve => setTimeout(resolve, 500))
+
+    // טעינת כותרות בנות
+    // console.log('📥 טוען כותרות בנות...')
+    const girlsHeadersResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/בנות!A1:AK1`,
+      { headers }
+    )
+
+    if (!girlsHeadersResponse.ok) {
+      throw new Error(`שגיאה בטעינת כותרות בנות: ${girlsHeadersResponse.status} ${girlsHeadersResponse.statusText}`)
+    }
+
+    const girlsHeadersData = await girlsHeadersResponse.json()
+    const girlsHeaders = girlsHeadersData.values?.[0] || []
+
+    // המתנה בין הבקשות
+    // console.log('⏳ ממתין בין בקשות...')
     await new Promise(resolve => setTimeout(resolve, 500))
 
     // טעינת בנות
-    console.log('📥 טוען נתוני בנות...')
+    // console.log('📥 טוען נתוני בנות...')
     const girlsResponse = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/בנות!A2:AZ100`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/בנות!A2:AK100`,
       { headers }
     )
 
     if (!girlsResponse.ok) {
       if (girlsResponse.status === 429) {
-        console.log('⏳ Rate limit - ממתין 2 שניות...')
+        // console.log('⏳ Rate limit - ממתין 2 שניות...')
         await new Promise(resolve => setTimeout(resolve, 2000))
         // ניסיון נוסף
         const retryResponse = await fetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/בנות!A2:AZ1000`,
+          `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/בנות!A2:AK100`,
           { headers }
         )
         if (!retryResponse.ok) {
@@ -367,16 +465,21 @@ export const loadCandidatesFromSheet = async (
       var girlsData = await girlsResponse.json()
     }
 
-    // עיבוד הנתונים
-    const males = (boysData.values || []).map((row: string[], index: number) => parseCandidate(row, 'male', index)).filter(Boolean) as DetailedCandidate[]
-    const females = (girlsData.values || []).map((row: string[], index: number) => parseCandidate(row, 'female', index)).filter(Boolean) as DetailedCandidate[]
+    // עיבוד הנתונים לפי מיקום עמודות קבוע
+    const males = (boysData.values || []).map((row: string[], index: number) => 
+      parseCandidateFixed(row, 'male', index, boysHeaders)
+    ).filter(Boolean) as DetailedCandidate[]
+    
+    const females = (girlsData.values || []).map((row: string[], index: number) => 
+      parseCandidateFixed(row, 'female', index, girlsHeaders)
+    ).filter(Boolean) as DetailedCandidate[]
 
-    console.log(`✅ נטענו בהצלחה: ${males.length} בנים, ${females.length} בנות`)
+    // console.log(`✅ נטענו בהצלחה: ${males.length} בנים, ${females.length} בנות`)
 
     return { males, females }
 
   } catch (error) {
-    console.error('❌ שגיאה בטעינת מועמדים:', error)
+    // console.error('❌ שגיאה בטעינת מועמדים:', error)
     throw new Error(`Failed to fetch sheet data: ${error}`)
   }
 }
@@ -572,7 +675,7 @@ const areReligiousLevelsCompatible = (level1: string, level2: string): boolean =
 // שלב 3: בדיקה אם זוג עובר את הסף הלוגי
 export const passesLogicalThreshold = (score: number, threshold: number = 4): boolean => {
   const passed = score >= threshold
-  console.log(`${passed ? '✅' : '❌'} ציון ${score.toFixed(1)} vs סף ${threshold} -> ${passed ? 'עובר' : 'נכשל'}`)
+  // console.log(`${passed ? '✅' : '❌'} ציון ${score.toFixed(1)} vs סף ${threshold} -> ${passed ? 'עובר' : 'נכשל'}`)
   return passed
 }
 

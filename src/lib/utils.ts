@@ -66,14 +66,13 @@ export function getScoreColor(score: number): string {
 // פונקציה לקבלת תרגום סטטוס
 export function getStatusText(status: string): string {
   const statusMap: Record<string, string> = {
-    'pending': 'ממתין לבדיקה',
-    'approved': 'אושר',
+    'pending': 'ממתין לאישור',
+    'ready_for_processing': 'ממתין לתחילת טיפול',
     'rejected': 'נדחה',
-    'in_progress': 'בתהליך',
     'completed': 'הושלם',
     'closed': 'סגור'
   }
-  return statusMap[status] || status
+  return statusMap[status] || 'התאמה חדשה'
 }
 
 // פונקציה לטיפול בשגיאות

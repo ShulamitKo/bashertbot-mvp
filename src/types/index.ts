@@ -61,13 +61,23 @@ export interface MatchProposal {
   match_score?: number;
   ai_reasoning?: string;
   
-  // מצב וניהול
-  status: 'pending' | 'approved' | 'rejected' | 'in_progress' | 'completed' | 'closed';
+  // מצב וניהול - זרימה מתקדמת חדשה
+  status: 'pending' | 'ready_for_processing' | 'rejected' | 'in_meeting_process' | 'ready_for_contact' | 'contacting' | 'awaiting_response' | 'rejected_by_candidate' | 'schedule_meeting' | 'meeting_scheduled' | 'meeting_completed' | 'completed' | 'closed';
   notes?: string;
   contact_attempts?: number;
   last_contact_date?: string;
   meeting_scheduled?: boolean;
   meeting_date?: string;
+  
+  // מעקב יצירת קשר מתקדם - חדש!
+  boy_contacted?: boolean;
+  girl_contacted?: boolean;
+  boy_response?: 'pending' | 'interested' | 'not_interested' | 'needs_time';
+  girl_response?: 'pending' | 'interested' | 'not_interested' | 'needs_time';
+  contact_method?: 'email' | 'whatsapp' | 'phone' | 'mixed';
+  rejection_reason?: string;
+  rejection_side?: 'boy' | 'girl' | 'both' | 'shadchan';
+  
   created_at?: string;
   createdAt?: string; // תמיכה לשתי הוריאנטים
   updated_at?: string;
@@ -158,7 +168,7 @@ export interface UserSettings {
   sheetConfig?: SheetConfig;
 }
 
-// מועמד מפורט (מהגיליון עם כל השדות)
+// מועמד מפורט (מהגיליון עם כל השדות) - עדכון לתמיכה במייל וטלפון נפרדים
 export interface DetailedCandidate {
   id: string;
   name: string;
@@ -190,6 +200,11 @@ export interface DetailedCandidate {
   familyBackground?: string;
   economicStatus?: string;
   healthStatus?: string;
+  
+  // פרטי קשר - עדכון חדש!
+  email?: string;    // עמודה חדשה בגיליון
+  phone?: string;    // עמודה חדשה בגיליון
+  contact?: string;  // שדה ישן - נשאיר לתמיכה לאחור
   
   // מטאדטה
   notes?: string;
@@ -234,6 +249,8 @@ export interface MatchingSettings {
 export interface ProposalNote {
   content: string;
   created_at: string;
+  status?: string; // הסטטוס שהיה בזמן יצירת ההערה
+  edited_at?: string; // תאריך עריכה אחרונה
 }
 
 // הצעה מורחבת עם כל הפרטים
@@ -258,6 +275,30 @@ export interface ProposalsFilter {
   sortBy?: 'created_at' | 'last_activity' | 'match_score' | 'days_in_process';
   sortOrder?: 'asc' | 'desc';
   searchTerm?: string; // חיפוש בשמות
+}
+
+// ============ טיפוסים חדשים לניהול קשר ============
+
+// פעולת יצירת קשר
+export interface ContactAction {
+  id: string;
+  proposal_id: string;
+  candidate_side: 'boy' | 'girl';
+  contact_method: 'email' | 'whatsapp' | 'phone';
+  contact_details: string; // מייל או טלפון
+  message_content?: string;
+  contacted_at: string;
+  response?: 'pending' | 'interested' | 'not_interested' | 'needs_time';
+  response_date?: string;
+  notes?: string;
+}
+
+// סטטוסי זרימת הצעה
+export interface ProposalStatusFlow {
+  current_status: MatchProposal['status'];
+  next_possible_statuses: MatchProposal['status'][];
+  required_actions?: string[];
+  auto_transitions?: { condition: string; next_status: MatchProposal['status'] }[];
 }
 
  

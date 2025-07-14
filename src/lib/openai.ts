@@ -124,7 +124,7 @@ const getExistingProposals = async (): Promise<Set<string>> => {
       .from('match_proposals')
       .select('boy_row_id, girl_row_id')
       .eq('shadchan_id', shadchan.id)
-      .in('status', ['approved', 'in_progress', 'pending']) // הצעות פעילות
+              .in('status', ['ready_for_processing']) // הצעות פעילות (לא כולל pending)
 
     if (error) {
       console.error('שגיאה בקבלת הצעות קיימות:', error)
@@ -229,7 +229,7 @@ const processPairsInBatches = async (pairs: any[], batchSize: number = 3): Promi
           // הוספת מזהי שורות לשמירה במסד הנתונים
           boy_row_id: pair.male.id,
           girl_row_id: pair.female.id,
-          // הוספת נתוני המועמדים המלאים
+          // הוספת נתוני המועמדים המלאים עם הסדר החדש והתקין
           boy_data: pair.male,
           girl_data: pair.female
         } as MatchProposal

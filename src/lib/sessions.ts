@@ -47,16 +47,6 @@ const createDetailedReasoning = (match: MatchProposal): string => {
   return parts.join('\n')
 }
 
-// מונה שגיאות 406 כדי לכבות את הבדיקה אם יש יותר מדי
-let proposal406ErrorCount = 0
-const MAX_406_ERRORS = 3
-
-// איפוס מונה שגיאות 406 (לקריאה מחוץ לקובץ)
-export const reset406ErrorCount = (): void => {
-  proposal406ErrorCount = 0
-  console.log('🔄 מונה שגיאות 406 אופס')
-}
-
 // טיפוסי נתונים לסשנים
 export interface MatchingSession {
   id: string
@@ -149,6 +139,12 @@ export const getActiveSession = async (): Promise<MatchingSession | null> => {
       
       console.error('❌ שגיאה בקבלת סשן פעיל:', error)
       throw error
+    }
+
+    // הדפסת סטטוסים לדיבוג
+    if (data && data.session_data) {
+      console.log('📊 getActiveSession - סטטוסי התאמות מהמסד נתונים:', 
+        data.session_data.map((m: MatchProposal) => ({ id: m.id, status: m.status, names: `${m.maleName} ↔ ${m.femaleName}` })))
     }
 
     return data
@@ -335,26 +331,10 @@ export const hasUnprocessedMatches = async (): Promise<{ hasUnprocessed: boolean
   }
 }
 
-// בדיקת האם ההצעה כבר קיימת לפני הוספה
-// בדיקה מתקדמת שמחזירה את פרטי ההצעה הקיימת (אם יש)
+// פונקציה לבדיקה מתקדמת אם הצעה קיימת (מחזירה פרטים מלאים)
 const checkIfProposalExistsAdvanced = async (shadchanId: string, boyRowId: string, girlRowId: string): Promise<{id: string, status: string, created_at: string} | null> => {
   try {
-    // אם יש יותר מדי שגיאות 406, נדלג על הבדיקה
-    if (proposal406ErrorCount >= MAX_406_ERRORS) {
-      console.warn(`⚠️ מדלג על בדיקת קיימות הצעה בגלל יותר מדי שגיאות 406 (${proposal406ErrorCount}/${MAX_406_ERRORS})`)
-      return null
-    }
-    
-    console.log(`🔍 בודק קיימות הצעה (מתקדם): shadchan=${shadchanId}, boy=${boyRowId}, girl=${girlRowId}`)
-    
-    // בדיקת אימות לפני ביצוע השאילתה
-    const { data: { user }, error: userError } = await supabase.auth.getUser()
-    if (userError || !user) {
-      console.warn('⚠️ בעיה באימות בזמן בדיקת הצעה - מדלג על בדיקה:', userError)
-      return null // במקום לזרוק שגיאה, פשוט נחזיר null
-    }
-
-    let { data, error } = await supabase
+    const { data: existingProposal } = await supabase
       .from('match_proposals')
       .select('id, status, created_at')
       .eq('shadchan_id', shadchanId)
@@ -362,137 +342,10 @@ const checkIfProposalExistsAdvanced = async (shadchanId: string, boyRowId: strin
       .eq('girl_row_id', girlRowId)
       .single()
 
-    // אם יש שגיאת 406, נעדכן את המונה ונדלג על הבדיקה
-    if (error && (error.code === 'PGRST301' || error.message?.includes('406') || error.message?.includes('Not Acceptable'))) {
-      proposal406ErrorCount++
-      console.warn(`⚠️ שגיאת 406 במתקדם (${proposal406ErrorCount}/${MAX_406_ERRORS}) - מדלג על בדיקה`)
-      return null
-    }
-
-    if (error) {
-      if (error.code === 'PGRST116') {
-        // לא נמצאה הצעה - זה תקין
-        console.log('✅ ההצעה לא קיימת במערכת - ניתן להוסיף')
-        return null
-      }
-      
-      // שגיאת 406 או שגיאות אימות אחרות
-      if (error.code === 'PGRST301' || error.message?.includes('JWT') || error.message?.includes('auth') || error.message?.includes('406')) {
-        if (error.message?.includes('406')) {
-          proposal406ErrorCount++
-          console.warn(`🔐 שגיאת 406 נוספת במתקדם (${proposal406ErrorCount}/${MAX_406_ERRORS})`)
-        }
-        console.warn('⚠️ מדלג על בדיקה ומתיר הוספה')
-        return null // במקום לזרוק שגיאה, פשוט נחזיר null
-      }
-      
-      // שגיאות אחרות - נחזיר null כדי לא לחסום
-      console.warn('⚠️ שגיאה בבדיקת הצעה במתקדם:', error)
-      return null
-    }
-
-    if (data) {
-      console.log(`💡 הצעה קיימת נמצאה: ${data.id}, סטטוס: ${data.status}, נוצרה: ${data.created_at}`)
-      return data
-    }
-
-    console.log('✅ ההצעה לא קיימת - ניתן להוסיף')
-    return null
+    return existingProposal || null
   } catch (error) {
-    console.error('❌ שגיאה בבדיקת קיימות הצעה:', error)
+    // אם אין רשומה - זה לא שגיאה
     return null
-  }
-}
-
-const checkIfProposalExists = async (shadchanId: string, boyRowId: string, girlRowId: string): Promise<boolean> => {
-  try {
-    console.log(`🔍 בודק קיימות הצעה: shadchan=${shadchanId}, boy=${boyRowId}, girl=${girlRowId}`)
-    
-    // בדיקת אימות לפני ביצוע השאילתה
-    const { data: { user }, error: userError } = await supabase.auth.getUser()
-    if (userError || !user) {
-      console.warn('⚠️ בעיה באימות בזמן בדיקת הצעה:', userError)
-      throw new Error('שגיאה באימות - אנא התחבר מחדש')
-    }
-
-    let { data, error } = await supabase
-      .from('match_proposals')
-      .select('id, status, created_at')
-      .eq('shadchan_id', shadchanId)
-      .eq('boy_row_id', boyRowId)
-      .eq('girl_row_id', girlRowId)
-      .single()
-
-    // אם יש שגיאת 406, ננסה לרענן טוקן ולנסות שוב
-    if (error && (error.code === 'PGRST301' || error.message?.includes('406') || error.message?.includes('Not Acceptable'))) {
-      console.log('🔄 שגיאת 406 - מנסה לרענן טוקן ולנסות שוב...')
-      
-      try {
-        const refreshed = await refreshAuthToken()
-        if (refreshed) {
-          console.log('✅ טוקן רוענן, מנסה שוב...')
-          
-          // נסיון שני
-          const retry = await supabase
-            .from('match_proposals')
-            .select('id, status, created_at')
-            .eq('shadchan_id', shadchanId)
-            .eq('boy_row_id', boyRowId)
-            .eq('girl_row_id', girlRowId)
-            .single()
-          
-          data = retry.data
-          error = retry.error
-        }
-      } catch (refreshError) {
-        console.error('❌ שגיאה ברענון טוקן:', refreshError)
-      }
-    }
-
-    if (error) {
-      console.log('📋 תגובת שגיאה מ-Supabase:', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint
-      })
-      
-      if (error.code === 'PGRST116') {
-        // לא נמצאה הצעה - זה תקין
-        console.log('✅ ההצעה לא קיימת במערכת - ניתן להוסיף')
-        return false
-      }
-      
-      // שגיאת 406 או שגיאות אימות אחרות (גם אחרי רענון)
-      if (error.code === 'PGRST301' || error.message?.includes('JWT') || error.message?.includes('auth') || error.message?.includes('406')) {
-        console.error('🔐 שגיאת הרשאות/אימות (גם אחרי רענון):', error)
-        throw new Error('שגיאה באימות או הרשאות - אנא התחבר מחדש')
-      }
-      
-      // שגיאות אחרות - נחזיר false כדי לא לחסום
-      console.warn('⚠️ שגיאה לא מוכרת בבדיקת הצעה:', error)
-      console.warn('⚠️ ממשיכים בהוספה למרות השגיאה')
-      return false
-    }
-
-    if (data) {
-      console.log(`💡 הצעה כבר קיימת: ${data.id}, סטטוס: ${data.status}, נוצרה: ${data.created_at}`)
-      return true
-    }
-
-    console.log('✅ ההצעה לא קיימת - ניתן להוסיף')
-    return false
-  } catch (error) {
-    console.error('❌ שגיאה בבדיקת קיימות הצעה:', error)
-    
-    // אם זה שגיאת אימות, נזרוק אותה הלאה
-    if (error instanceof Error && error.message.includes('אימות')) {
-      throw error
-    }
-    
-    // במקרה של שגיאה אחרת, נחזיר false כדי לא לחסום את התהליך
-    console.warn('⚠️ ממשיכים בהוספה למרות השגיאה')
-    return false
   }
 }
 
@@ -578,7 +431,7 @@ export const moveMatchToProposals = async (match: MatchProposal): Promise<void> 
       girl_row_id: girlRowId,
       match_score: score,
       ai_reasoning: detailedReasoning,
-      status: 'approved',
+      status: 'ready_for_processing',
       original_session_id: activeSession?.id || null
     }
 
@@ -612,6 +465,15 @@ export const moveMatchToProposals = async (match: MatchProposal): Promise<void> 
     }
 
     console.log('✅ הצעה הועברה בהצלחה להצעות פעילות')
+    console.log('📋 פרטי ההצעה שנוצרה:', {
+      shadchan_id: shadchan.id,
+      boy_row_id: boyRowId,
+      girl_row_id: girlRowId,
+      status: 'ready_for_processing',
+      match_score: score,
+      boyName: match.maleName,
+      girlName: match.femaleName
+    })
 
   } catch (error) {
     console.error('❌ שגיאה בהעברת התאמה להצעות:', error)
