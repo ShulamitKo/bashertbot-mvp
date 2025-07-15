@@ -55,7 +55,7 @@ export const ContactButtons: React.FC<ContactButtonsProps> = ({
     const [rejectionReason, setRejectionReason] = useState('');
     
     // דיבוג פרטי קשר בקומפוננט ContactButtons
-    console.log(`🔍 דיבוג פרטי קשר - ${side === 'boy' ? 'בן' : 'בת'} ${candidate.name}:`, {
+   // console.log(`🔍 דיבוג פרטי קשר - ${side === 'boy' ? 'בן' : 'בת'} ${candidate.name}:`, {
       candidateId: candidate.id,
       candidateObject: candidate,
       emailField: candidate.email || 'ריק',

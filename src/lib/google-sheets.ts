@@ -340,19 +340,7 @@ const parseCandidateFixed = (row: string[], _gender: 'male' | 'female', rowIndex
     phone: safeGetValue(row, cols.phone)
   }
 
-  // דיבוג מתקדם - יציג את הערכים בפועל מהשדות החשובים
-  if (name && name.trim()) {
-    console.log(`🔍 דיבוג קבוע עבור ${name.trim()}:`, {
-      position: `שורה ${rowIndex + 2}`,
-      totalColumns: row.length,
-      detectedMappings: {
-        email: `עמודה ${cols.email} = "${candidate.email}"`,
-        phone: `עמודה ${cols.phone} = "${candidate.phone}"`,
-        previouslyProposed: `עמודה ${cols.previouslyProposed} = "${candidate.previouslyProposed}"`,
-        currentlyProposed: `עמודה ${cols.currentlyProposed} = "${candidate.currentlyProposed}"`
-      }
-    });
-  }
+
 
   return candidate
 }

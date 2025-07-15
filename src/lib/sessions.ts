@@ -64,12 +64,10 @@ export const getActiveSession = async (): Promise<MatchingSession | null> => {
   try {
     const { data: { user }, error: userError } = await supabase.auth.getUser()
     if (userError) {
-      console.error('❌ שגיאה בקבלת פרטי משתמש:', userError)
       throw new Error('שגיאה באימות המשתמש')
     }
     
     if (!user) {
-      console.warn('⚠️ משתמש לא מחובר')
       return null
     }
 
@@ -80,7 +78,6 @@ export const getActiveSession = async (): Promise<MatchingSession | null> => {
       .single()
 
     if (shadchanError) {
-      console.error('❌ שגיאה בקבלת פרטי שדכן:', shadchanError)
       if (shadchanError.code === 'PGRST116') {
         throw new Error('לא נמצא פרופיל שדכן. אנא צור פרופיל חדש.')
       }
@@ -88,7 +85,6 @@ export const getActiveSession = async (): Promise<MatchingSession | null> => {
     }
 
     if (!shadchan) {
-      console.warn('⚠️ לא נמצא פרופיל שדכן')
       return null
     }
 
@@ -101,13 +97,9 @@ export const getActiveSession = async (): Promise<MatchingSession | null> => {
 
     // אם יש שגיאת 406, ננסה לרענן טוקן ולנסות שוב
     if (error && (error.code === 'PGRST301' || error.message?.includes('406') || error.message?.includes('Not Acceptable'))) {
-      console.log('🔄 שגיאת 406 בקבלת סשן - מנסה לרענן טוקן ולנסות שוב...')
-      
       try {
         const refreshed = await refreshAuthToken()
         if (refreshed) {
-          console.log('✅ טוקן רוענן, מנסה שוב...')
-          
           // נסיון שני
           const retry = await supabase
             .from('matching_sessions')
@@ -127,24 +119,16 @@ export const getActiveSession = async (): Promise<MatchingSession | null> => {
     if (error) {
       if (error.code === 'PGRST116') {
         // לא נמצא סשן פעיל - זה תקין
-        console.log('ℹ️ לא נמצא סשן פעיל')
         return null
       }
       
       // טיפול בשגיאת 406 (גם אחרי רענון)
       if (error.code === 'PGRST301' || error.message?.includes('406') || error.message?.includes('Not Acceptable')) {
-        console.error('🔐 שגיאת הרשאות 406 בקבלת סשן פעיל (גם אחרי רענון):', error)
         throw new Error('שגיאת הרשאות - אנא רענן את הדף והתחבר מחדש')
       }
       
       console.error('❌ שגיאה בקבלת סשן פעיל:', error)
       throw error
-    }
-
-    // הדפסת סטטוסים לדיבוג
-    if (data && data.session_data) {
-      console.log('📊 getActiveSession - סטטוסי התאמות מהמסד נתונים:', 
-        data.session_data.map((m: MatchProposal) => ({ id: m.id, status: m.status, names: `${m.maleName} ↔ ${m.femaleName}` })))
     }
 
     return data
@@ -187,7 +171,6 @@ export const createNewSession = async (): Promise<MatchingSession | null> => {
 
     if (error) throw error
 
-    console.log('✅ נוצר סשן חדש:', data.id)
     return data
   } catch (error) {
     console.error('❌ שגיאה ביצירת סשן חדש:', error)
@@ -208,7 +191,6 @@ const pushActiveToHistory = async (shadchanId: string): Promise<void> => {
     if (checkError) throw checkError
 
     if (!activeSessions || activeSessions.length === 0) {
-      console.log('📝 אין סשן פעיל לדחיקה להיסטוריה')
       return
     }
 
@@ -221,11 +203,9 @@ const pushActiveToHistory = async (shadchanId: string): Promise<void> => {
 
     if (error) throw error
     
-    console.log(`📚 סשן פעיל הועבר להיסטוריה (${activeSessions.length} סשנים)`)
   } catch (error) {
     console.error('שגיאה בדחיקת סשן להיסטוריה:', error)
     // לא נזרוק שגיאה כדי לא לחסום יצירת סשן חדש
-    console.warn('⚠️ ממשיכים ביצירת סשן חדש למרות השגיאה')
   }
 }
 
@@ -234,7 +214,6 @@ export const updateActiveSession = async (matches: MatchProposal[]): Promise<voi
   try {
     const activeSession = await getActiveSession()
     if (!activeSession) {
-      console.warn('אין סשן פעיל לעדכון')
       return
     }
 
@@ -251,7 +230,6 @@ export const updateActiveSession = async (matches: MatchProposal[]): Promise<voi
 
     if (error) throw error
 
-    console.log(`✅ עודכן סשן: ${matches.length} התאמות, ${processedCount} מעובדות`)
   } catch (error) {
     console.error('❌ שגיאה בעדכון סשן:', error)
     throw error
@@ -274,7 +252,6 @@ export const updateSpecificSession = async (sessionId: string, matches: MatchPro
 
     if (error) throw error
 
-    console.log(`✅ עודכן סשן ${sessionId}: ${matches.length} התאמות, ${processedCount} מעובדות`)
   } catch (error) {
     console.error('❌ שגיאה בעדכון סשן ספציפי:', error)
     throw error
@@ -305,7 +282,6 @@ export const getSessionHistory = async (): Promise<MatchingSession[]> => {
 
     if (error) throw error
 
-    console.log(`📚 נטענו ${data?.length || 0} סשנים מההיסטוריה`)
     return data || []
   } catch (error) {
     console.error('שגיאה בקבלת היסטוריית סשנים:', error)
@@ -367,42 +343,26 @@ export const moveMatchToProposals = async (match: MatchProposal): Promise<void> 
     const boyRowId = match.boy_row_id || match.maleId || 'unknown'
     const girlRowId = match.girl_row_id || match.femaleId || 'unknown'
 
-    console.log('🔍 מזהי שורות:', {
-      'match.boy_row_id': match.boy_row_id,
-      'match.maleId': match.maleId,
-      'boyRowId מחושב': boyRowId,
-      'match.girl_row_id': match.girl_row_id,
-      'match.femaleId': match.femaleId,
-      'girlRowId מחושב': girlRowId,
-      'match.id': match.id,
-      'match.maleName': match.maleName,
-      'match.femaleName': match.femaleName
-    })
+
 
     try {
-      // בדיקה מתקדמת יותר - נבדוק אם יש הצעה קיימת שנוצרה לפני יותר מ-5 שניות
-      const existingProposal = await checkIfProposalExistsAdvanced(shadchan.id, boyRowId, girlRowId)
-      if (existingProposal) {
-        const timeDiff = Date.now() - new Date(existingProposal.created_at).getTime()
+          // בדיקה מתקדמת יותר - נבדוק אם יש הצעה קיימת שנוצרה לפני יותר מ-5 שניות
+    const existingProposal = await checkIfProposalExistsAdvanced(shadchan.id, boyRowId, girlRowId)
+    if (existingProposal) {
+      const timeDiff = Date.now() - new Date(existingProposal.created_at).getTime()
+      
+      // אם ההצעה נוצרה לפני יותר מ-5 שניות, זו הצעה אמיתית קיימת
+      if (timeDiff > 5000) {
+        const boyDisplayName = match.maleName || 'בחור לא ידוע'
+        const girlDisplayName = match.femaleName || 'בחורה לא ידועה'
         
-        // אם ההצעה נוצרה לפני יותר מ-5 שניות, זו הצעה אמיתית קיימת
-        if (timeDiff > 5000) {
-          const boyDisplayName = match.maleName || 'בחור לא ידוע'
-          const girlDisplayName = match.femaleName || 'בחורה לא ידועה'
-          
-          console.log(`💡 ההצעה כבר קיימת (נוצרה לפני ${Math.round(timeDiff/1000)} שניות): ${boyDisplayName} ו${girlDisplayName}`)
-          
-          alert(`💡 ההצעה הזו כבר מאושרת!\n\n` +
-                `${boyDisplayName} ו${girlDisplayName} כבר מופיעים ברשימת ההצעות הפעילות שלך.\n\n` +
-                `ניתן לעבור לטאב "הצעות פעילות" כדי לראות את הסטטוס הנוכחי.`)
-          
-          console.log('✅ ההצעה כבר קיימת - מדלג על הוספה')
-          return
-        } else {
-          // אם ההצעה נוצרה זה עתה (פחות מ-5 שניות), זה כנראה race condition
-          console.log(`⚠️ נמצאה הצעה שנוצרה זה עתה (לפני ${Math.round(timeDiff/1000)} שניות) - מדלג על בדיקה`)
-        }
+        alert(`💡 ההצעה הזו כבר מאושרת!\n\n` +
+              `${boyDisplayName} ו${girlDisplayName} כבר מופיעים ברשימת ההצעות הפעילות שלך.\n\n` +
+              `ניתן לעבור לטאב "הצעות פעילות" כדי לראות את הסטטוס הנוכחי.`)
+        
+        return
       }
+    }
     } catch (error) {
       // אם זה שגיאת אימות או 406, נטפל בזה בנפרד
       if (error instanceof Error && error.message.includes('אימות')) {
@@ -412,7 +372,6 @@ export const moveMatchToProposals = async (match: MatchProposal): Promise<void> 
       }
       
       // שגיאות אחרות - נמשיך בתהליך
-      console.warn('⚠️ לא הצלחנו לבדוק קיימות הצעה, ממשיכים בהוספה:', error)
     }
 
     // המשך הפונקציה כרגיל...
@@ -434,9 +393,6 @@ export const moveMatchToProposals = async (match: MatchProposal): Promise<void> 
       status: 'ready_for_processing',
       original_session_id: activeSession?.id || null
     }
-
-    console.log('מנסה להוסיף הצעה עם הנתונים הבסיסיים:', basicProposalData)
-    console.log('⏰ זמן נוכחי:', new Date().toISOString())
 
     const { error } = await supabase
       .from('match_proposals')
@@ -463,17 +419,6 @@ export const moveMatchToProposals = async (match: MatchProposal): Promise<void> 
       
       throw error
     }
-
-    console.log('✅ הצעה הועברה בהצלחה להצעות פעילות')
-    console.log('📋 פרטי ההצעה שנוצרה:', {
-      shadchan_id: shadchan.id,
-      boy_row_id: boyRowId,
-      girl_row_id: girlRowId,
-      status: 'ready_for_processing',
-      match_score: score,
-      boyName: match.maleName,
-      girlName: match.femaleName
-    })
 
   } catch (error) {
     console.error('❌ שגיאה בהעברת התאמה להצעות:', error)
@@ -512,8 +457,6 @@ export const deleteSession = async (sessionId: string) => {
 
     if (!shadchan) throw new Error('לא נמצא פרופיל שדכן')
 
-    console.log('🔍 מנסה למחוק סשן:', sessionId, 'עבור שדכן:', shadchan.id)
-
     // ראשית נבדוק שהסשן קיים ושייך לשדכן
     const { data: sessionToDelete, error: fetchError } = await supabase
       .from('matching_sessions')
@@ -523,15 +466,12 @@ export const deleteSession = async (sessionId: string) => {
       .single()
 
     if (fetchError) {
-      console.error('❌ שגיאה בחיפוש הסשן:', fetchError)
       throw new Error(`לא ניתן למצוא את הסשן: ${fetchError.message}`)
     }
 
     if (!sessionToDelete) {
       throw new Error('הסשן לא נמצא או שאינך מורשה למחוק אותו')
     }
-
-    console.log('✅ סשן נמצא, מבצע מחיקה...')
 
     const { error } = await supabase
       .from('matching_sessions')
@@ -540,11 +480,8 @@ export const deleteSession = async (sessionId: string) => {
       .eq('shadchan_id', shadchan.id)
 
     if (error) {
-      console.error('❌ שגיאה במחיקה:', error)
       throw error
     }
-
-    console.log('✅ סשן נמחק בהצלחה:', sessionId)
     
   } catch (error) {
     console.error('❌ שגיאה במחיקת סשן:', error)
@@ -559,14 +496,12 @@ export const checkAuthConnection = async (): Promise<{ isConnected: boolean, sha
     
     // אם יש שגיאה, ננסה לרענן את הטוקן
     if (userError) {
-      console.warn('⚠️ שגיאה באימות, מנסה לרענן טוקן...')
       const refreshed = await refreshAuthToken()
       
       if (refreshed) {
         // ננסה שוב אחרי הרענון
         const { data: { user: refreshedUser }, error: refreshError } = await supabase.auth.getUser()
         if (refreshError) {
-          console.error('❌ שגיאה באימות גם אחרי רענון:', refreshError)
           return { 
             isConnected: false, 
             error: 'שגיאה באימות המשתמש. אנא התחבר מחדש.' 
@@ -574,7 +509,6 @@ export const checkAuthConnection = async (): Promise<{ isConnected: boolean, sha
         }
         user = refreshedUser
       } else {
-        console.error('❌ שגיאה באימות:', userError)
         return { 
           isConnected: false, 
           error: 'שגיאה באימות המשתמש. אנא התחבר מחדש.' 
@@ -583,7 +517,6 @@ export const checkAuthConnection = async (): Promise<{ isConnected: boolean, sha
     }
     
     if (!user) {
-      console.warn('⚠️ משתמש לא מחובר')
       return { 
         isConnected: false, 
         error: 'משתמש לא מחובר. אנא התחבר למערכת.' 
@@ -597,7 +530,6 @@ export const checkAuthConnection = async (): Promise<{ isConnected: boolean, sha
       .single()
 
     if (shadchanError) {
-      console.error('❌ שגיאה בטעינת פרטי שדכן:', shadchanError)
       if (shadchanError.code === 'PGRST116') {
         return { 
           isConnected: false, 
@@ -617,7 +549,6 @@ export const checkAuthConnection = async (): Promise<{ isConnected: boolean, sha
       }
     }
 
-    console.log(`✅ מחובר בהצלחה כ-${shadchan.name}`)
     return { 
       isConnected: true, 
       shadchanId: shadchan.id 

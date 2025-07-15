@@ -55,14 +55,10 @@ const extractReasoningDetails = (aiReasoning: string) => {
 // טעינת הצעות פעילות עם פרטים מלאים
 export const loadEnhancedProposals = async (accessToken: string): Promise<EnhancedProposal[]> => {
   try {
-    console.log('🔄 [loadEnhancedProposals] מתחיל טעינת הצעות מורחבות...')
-    
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
-      console.error('❌ [loadEnhancedProposals] משתמש לא מחובר')
       throw new Error('משתמש לא מחובר')
     }
-    console.log('✅ [loadEnhancedProposals] משתמש מחובר:', user.id)
 
     const { data: shadchan } = await supabase
       .from('shadchanim')
@@ -71,10 +67,8 @@ export const loadEnhancedProposals = async (accessToken: string): Promise<Enhanc
       .single()
 
     if (!shadchan) {
-      console.error('❌ [loadEnhancedProposals] לא נמצא פרופיל שדכן עבור המשתמש:', user.id)
       throw new Error('לא נמצא פרופיל שדכן')
     }
-    console.log('✅ [loadEnhancedProposals] נמצא פרופיל שדכן:', shadchan.id)
 
     // טעינת הצעות פעילות - כולל את כל הסטטוסים הרלוונטיים
     const { data: proposals, error } = await supabase
@@ -85,23 +79,7 @@ export const loadEnhancedProposals = async (accessToken: string): Promise<Enhanc
       .order('updated_at', { ascending: false })
 
     if (error) {
-      console.error('❌ [loadEnhancedProposals] שגיאה בטעינת הצעות:', error)
       throw error
-    }
-    console.log('✅ [loadEnhancedProposals] נטענו הצעות מהמסד:', proposals?.length || 0)
-    
-    // דיבוג סטטוסים
-    if (proposals && proposals.length > 0) {
-      const statusCounts = proposals.reduce((acc, p) => {
-        acc[p.status] = (acc[p.status] || 0) + 1
-        return acc
-      }, {} as Record<string, number>)
-      console.log('📊 [loadEnhancedProposals] סטטוסים במסד:', statusCounts)
-      
-      // דיבוג מפורט של הצעות
-      proposals.forEach(p => {
-        console.log(`🔍 [loadEnhancedProposals] הצעה ${p.id.slice(-8)}: סטטוס=${p.status}, נוצרה=${p.created_at}, עודכנה=${p.updated_at}`)
-      })
     }
 
     // טעינת מועמדים מהגיליון
@@ -197,40 +175,13 @@ export const loadEnhancedProposals = async (accessToken: string): Promise<Enhanc
             content: proposal.notes,
             created_at: proposal.updated_at || proposal.created_at || new Date().toISOString()
           }]
-          console.log('📝 יצרנו היסטוריית הערות מההערה הקיימת עבור הצעה:', proposal.id)
         }
-        console.log('📊 הצעה:', proposal.id, 'הערות:', { 
-          notes: proposal.notes, 
-          notes_history: proposal.notes_history, 
-          final_notesHistory: notesHistory 
-        })
 
         // אם נטענו נתונים חדשים מהגיליון, נעדכן את boy_data ו-girl_data עם הנתונים החדשים
         const updatedBoyData = boyDetails || proposal.boy_data
         const updatedGirlData = girlDetails || proposal.girl_data
 
-        // דיבוג השוואה בין נתונים ישנים לחדשים
-        if (boyDetails && proposal.boy_data) {
-          console.log(`🔄 השוואת נתוני בן עבור הצעה ${proposal.id}:`, {
-            'נתונים ישנים boy_data keys': Object.keys(proposal.boy_data),
-            'נתונים חדשים boyDetails keys': Object.keys(boyDetails),
-            'email ישן': proposal.boy_data.email || 'ריק',
-            'email חדש': boyDetails.email || 'ריק',
-            'previouslyProposed ישן': proposal.boy_data.previouslyProposed || 'ריק',
-            'previouslyProposed חדש': boyDetails.previouslyProposed || 'ריק'
-          })
-        }
 
-        if (girlDetails && proposal.girl_data) {
-          console.log(`🔄 השוואת נתוני בת עבור הצעה ${proposal.id}:`, {
-            'נתונים ישנים girl_data keys': Object.keys(proposal.girl_data),
-            'נתונים חדשים girlDetails keys': Object.keys(girlDetails),
-            'email ישן': proposal.girl_data.email || 'ריק',
-            'email חדש': girlDetails.email || 'ריק',
-            'previouslyProposed ישן': proposal.girl_data.previouslyProposed || 'ריק',
-            'previouslyProposed חדש': girlDetails.previouslyProposed || 'ריק'
-          })
-        }
 
         return {
           ...proposal,
@@ -253,11 +204,9 @@ export const loadEnhancedProposals = async (accessToken: string): Promise<Enhanc
       })
     )
 
-    console.log('✅ [loadEnhancedProposals] הושלמה עיבוד של', enhancedProposals.length, 'הצעות מורחבות')
     return enhancedProposals
 
   } catch (error) {
-    console.error('❌ [loadEnhancedProposals] שגיאה כללית:', error)
     console.error('שגיאה בטעינת הצעות מורחבות:', error)
     throw error
   }
@@ -273,37 +222,39 @@ export const updateProposalStatus = async (
 ): Promise<boolean> => {
   try {
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) throw new Error('משתמש לא מחובר')
+    if (!user) {
+      throw new Error('משתמש לא מחובר')
+    }
 
-    // קבלת פרטי השדכן
+    // קבלת פרטי השדכן והנתונים הנוכחיים של ההצעה בשאילתה אחת
     const { data: shadchan } = await supabase
       .from('shadchanim')
       .select('id')
       .eq('auth_user_id', user.id)
       .single()
 
-    if (!shadchan) throw new Error('לא נמצא פרופיל שדכן')
+    if (!shadchan) {
+      throw new Error('לא נמצא פרופיל שדכן')
+    }
 
-    // קבלת הסטטוס הנוכחי
+    // קבלת הנתונים הנוכחיים של ההצעה
     const { data: currentProposal } = await supabase
       .from('match_proposals')
-      .select('status')
+      .select('status, notes_history, shadchan_id')
       .eq('id', proposalId)
       .single()
 
-    if (!currentProposal) throw new Error('הצעה לא נמצאה')
+    if (!currentProposal) {
+      throw new Error('הצעה לא נמצאה')
+    }
 
-    console.log(`📝 מעדכן הצעה ${proposalId}: ${currentProposal.status} → ${newStatus}`)
-
-    // קבלת ההיסטוריה הנוכחית של ההערות
-    const { data: currentData } = await supabase
-      .from('match_proposals')
-      .select('notes_history')
-      .eq('id', proposalId)
-      .single()
+    // בדיקת הרשאה
+    if (currentProposal.shadchan_id !== shadchan.id) {
+      throw new Error('אין הרשאה לעדכן הצעה זו')
+    }
 
     // הכנת היסטוריית הערות מעודכנת
-    let updatedNotesHistory = currentData?.notes_history || []
+    let updatedNotesHistory = currentProposal.notes_history || []
     if (notes && notes.trim()) {
       updatedNotesHistory = [
         ...updatedNotesHistory,
@@ -315,7 +266,7 @@ export const updateProposalStatus = async (
       ]
     }
 
-    // עדכון הסטטוס בטבלה הראשית
+    // עדכון הסטטוס בטבלה הראשית - פעולה אחת
     const { error: updateError } = await supabase
       .from('match_proposals')
       .update({
@@ -327,17 +278,13 @@ export const updateProposalStatus = async (
       .eq('id', proposalId)
 
     if (updateError) {
-      console.error('❌ שגיאה בעדכון הצעה:', updateError)
       throw updateError
     }
 
-    console.log('✅ הצעה עודכנה בהצלחה במסד הנתונים')
-
-    console.log(`✅ סטטוס הצעה ${proposalId} עודכן ל-${newStatus}`)
     return true
 
   } catch (error) {
-    console.error('❌ שגיאה בעדכון סטטוס הצעה:', error)
+    console.error('❌ [updateProposalStatus] שגיאה בעדכון סטטוס הצעה:', error)
     return false
   }
 }
@@ -402,7 +349,6 @@ export const editProposalNote = async (
       throw updateError
     }
 
-    console.log(`✅ הערה ${noteIndex} עודכנה בהצעה ${proposalId}`)
     return true
 
   } catch (error) {
@@ -468,7 +414,6 @@ export const deleteProposalNote = async (
       throw updateError
     }
 
-    console.log(`✅ הערה ${noteIndex} נמחקה מהצעה ${proposalId}`)
     return true
 
   } catch (error) {
@@ -551,7 +496,6 @@ export const contactCandidate = async (
 
     if (contactError) throw contactError
 
-    console.log(`✅ יצירת קשר נרשמה: ${side} via ${method}`)
     return true
 
   } catch (error) {
@@ -566,56 +510,24 @@ export const updateCandidateResponse = async (
   side: 'boy' | 'girl',
   response: 'interested' | 'not_interested' | 'needs_time',
   shadchanId: string,
-  rejectionReason?: string
+  rejectionReason?: string,
+  boyName?: string,
+  girlName?: string
 ): Promise<boolean> => {
   try {
-    // אין צורך ב-getUser() או ב-select shadchanim, כי shadchanId כבר הועבר
-    // ובדיקת הרשאה תתבצע באמצעות השוואת shadchanId עם shadchan_id של ההצעה
-
-    // בדיקה שההצעה שייכת לשדכן
+    // בדיקה שההצעה שייכת לשדכן וקבלת הנתונים הנוכחיים
     const { data: proposal } = await supabase
       .from('match_proposals')
-      .select('shadchan_id, boy_response, girl_response, boy_row_id, girl_row_id')
+      .select('shadchan_id, boy_response, girl_response, boy_row_id, girl_row_id, notes_history')
       .eq('id', proposalId)
       .single()
 
-    if (!proposal) throw new Error('הצעה לא נמצאה')
+    if (!proposal) {
+      throw new Error('הצעה לא נמצאה')
+    }
 
     if (proposal.shadchan_id !== shadchanId) {
       throw new Error('אין הרשאה לעדכן הצעה זו')
-    }
-
-    // טעינת השמות מהגיליון
-    let boyName = 'הבן'
-    let girlName = 'הבת'
-    
-    try {
-      // קבלת פרטי השדכן לגישה לגיליון
-      const { data: shadchan } = await supabase
-        .from('shadchanim')
-        .select('google_sheet_id, sheet_boys_tab_name, sheet_girls_tab_name')
-        .eq('id', shadchanId)
-        .single()
-
-      if (shadchan?.google_sheet_id) {
-        const { data: { session } } = await supabase.auth.getSession()
-        if (session?.provider_token) {
-          const { loadCandidatesFromSheet } = await import('./google-sheets')
-          const candidates = await loadCandidatesFromSheet(
-            session.provider_token,
-            shadchan.google_sheet_id
-          )
-          
-          // חיפוש השמות לפי row_id
-          const boyCandidate = candidates.males.find(m => m.id === proposal.boy_row_id)
-          const girlCandidate = candidates.females.find(f => f.id === proposal.girl_row_id)
-          
-          if (boyCandidate) boyName = boyCandidate.name
-          if (girlCandidate) girlName = girlCandidate.name
-        }
-      }
-    } catch (error) {
-      console.warn('לא הצלחנו לטעון שמות מהגיליון, נשתמש בטקסט כללי:', error)
     }
 
     // עדכון התגובה
@@ -636,59 +548,51 @@ export const updateCandidateResponse = async (
     } else if (response === 'interested' && otherResponse === 'interested') {
       // שני הצדדים מעוניינים - מעבר לשלב קביעת פגישה
       updateData.status = 'schedule_meeting'
-      console.log('🎉 שני הצדדים מעוניינים - מעבר לשלב קביעת פגישה!')
     } else if (response === 'interested') {
       // צד אחד מעוניין - ממתינים לתגובת הצד השני
       updateData.status = 'awaiting_response'
-      console.log(`✅ ${side} מעוניין/ת - ממתינים לתגובת הצד השני`)
     } else if (response === 'needs_time') {
       // צריך זמן - נשאר בהמתנה
       updateData.status = 'awaiting_response'
-      console.log(`⏰ ${side} צריך/ה זמן לחשוב`)
     }
 
-    // הוספת הערה אוטומטית על השינוי
+    // הוספת הערה אוטומטית על השינוי - עם שמות שהועברו או מזהים כגיבוי
     let autoNote = ''
     
+    // שימוש בשמות שהועברו כפרמטרים, או מזהים כגיבוי
+    const finalBoyName = boyName || `בן #${proposal.boy_row_id}`
+    const finalGirlName = girlName || `בת #${proposal.girl_row_id}`
+    
     if (side === 'boy') {
-      // לשון זכר
       const responseText = response === 'interested' ? 'מעוניין' : 
                           response === 'not_interested' ? 'לא מעוניין' : 'צריך זמן'
       
       if (response === 'not_interested') {
-        autoNote = `${boyName} ענה: ${responseText} - ההצעה נדחתה${rejectionReason ? ` (סיבה: ${rejectionReason})` : ''}`
+        autoNote = `${finalBoyName} ענה: ${responseText} - ההצעה נדחתה${rejectionReason ? ` (סיבה: ${rejectionReason})` : ''}`
       } else if (response === 'interested' && otherResponse === 'interested') {
-        autoNote = `${boyName} ענה: ${responseText} - שני הצדדים מעוניינים! יש לקבוע פגישה`
+        autoNote = `${finalBoyName} ענה: ${responseText} - שני הצדדים מעוניינים! יש לקבוע פגישה`
       } else if (response === 'interested') {
-        autoNote = `${boyName} ענה: ${responseText} - ממתינים לתגובת ${girlName}`
+        autoNote = `${finalBoyName} ענה: ${responseText} - ממתינים לתגובת ${finalGirlName}`
       } else if (response === 'needs_time') {
-        autoNote = `${boyName} ענה: ${responseText} - ממתינים להחלטה`
+        autoNote = `${finalBoyName} ענה: ${responseText} - ממתינים להחלטה`
       }
     } else {
-      // לשון נקבה
       const responseText = response === 'interested' ? 'מעוניינת' : 
                           response === 'not_interested' ? 'לא מעוניינת' : 'צריכה זמן'
       
       if (response === 'not_interested') {
-        autoNote = `${girlName} ענתה: ${responseText} - ההצעה נדחתה${rejectionReason ? ` (סיבה: ${rejectionReason})` : ''}`
+        autoNote = `${finalGirlName} ענתה: ${responseText} - ההצעה נדחתה${rejectionReason ? ` (סיבה: ${rejectionReason})` : ''}`
       } else if (response === 'interested' && otherResponse === 'interested') {
-        autoNote = `${girlName} ענתה: ${responseText} - שני הצדדים מעוניינים! יש לקבוע פגישה`
+        autoNote = `${finalGirlName} ענתה: ${responseText} - שני הצדדים מעוניינים! יש לקבוע פגישה`
       } else if (response === 'interested') {
-        autoNote = `${girlName} ענתה: ${responseText} - ממתינים לתגובת ${boyName}`
+        autoNote = `${finalGirlName} ענתה: ${responseText} - ממתינים לתגובת ${finalBoyName}`
       } else if (response === 'needs_time') {
-        autoNote = `${girlName} ענתה: ${responseText} - ממתינים להחלטה`
+        autoNote = `${finalGirlName} ענתה: ${responseText} - ממתינים להחלטה`
       }
     }
 
-    // קבלת ההיסטוריה הנוכחית של ההערות
-    const { data: currentData } = await supabase
-      .from('match_proposals')
-      .select('notes_history')
-      .eq('id', proposalId)
-      .single()
-
     // הוספת ההערה האוטומטית להיסטוריה
-    let updatedNotesHistory = currentData?.notes_history || []
+    let updatedNotesHistory = proposal.notes_history || []
     if (autoNote) {
       updatedNotesHistory = [
         ...updatedNotesHistory,
@@ -702,15 +606,18 @@ export const updateCandidateResponse = async (
       updateData.notes = autoNote // עדכון ההערה האחרונה
     }
 
+    // עדכון במסד הנתונים - פעולה אחת
     const { error: updateError } = await supabase
       .from('match_proposals')
       .update(updateData)
       .eq('id', proposalId)
 
-    if (updateError) throw updateError
+    if (updateError) {
+      throw updateError
+    }
 
-    // עדכון גם בטבלת פעולות הקשר
-    const { error: contactUpdateError } = await supabase
+    // עדכון גם בטבלת פעולות הקשר - נעשה זאת באופן אסינכרוני
+    supabase
       .from('contact_actions')
       .update({
         response: response,
@@ -718,17 +625,17 @@ export const updateCandidateResponse = async (
       })
       .eq('proposal_id', proposalId)
       .eq('candidate_side', side)
-      .is('response_date', null) // עדכון רק של הפעולה האחרונה שעדיין לא נענתה
+      .is('response_date', null)
+      .then(({ error }) => {
+        if (error) {
+          console.warn('⚠️ [updateCandidateResponse] שגיאה בעדכון טבלת פעולות קשר:', error)
+        }
+      })
 
-    if (contactUpdateError) {
-      console.warn('שגיאה בעדכון טבלת פעולות קשר:', contactUpdateError)
-    }
-
-    console.log(`✅ תגובת ${side} עודכנה ל-${response}`)
     return true
 
   } catch (error) {
-    console.error('❌ שגיאה בעדכון תגובת מועמד:', error)
+    console.error('❌ [updateCandidateResponse] שגיאה בעדכון תגובת מועמד:', error)
     return false
   }
 } 

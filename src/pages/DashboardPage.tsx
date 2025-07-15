@@ -65,7 +65,6 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
       
       const count = currentProposals?.length || 0
       setActiveProposalsCount(count)
-      console.log('📊 נטען מספר הצעות פעילות:', count)
     } catch (error) {
       console.error('שגיאה בטעינת מספר הצעות:', error)
     }
@@ -82,15 +81,10 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
     
     // הוספת דיבוג לבדיקת סטטוס האימות
     const initializeAuth = async () => {
-      console.log('🔍 מתחיל בדיקת אימות...')
-        
       // בדיקת סשן נוכחי
       const { data: { session }, error: sessionError } = await supabase.auth.getSession()
-      console.log('📋 Session:', session)
-      console.log('❌ Session Error:', sessionError)
       
       if (!session) {
-        console.error('❌ אין סשן פעיל! המשתמש לא מחובר')
         setAuthStatus('unauthenticated')
         return
       }
@@ -106,7 +100,6 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
         .single()
 
       if (shadchanError || !shadchanData) {
-        console.error('❌ שגיאה באחזור Shadchan ID או לא נמצא: ', shadchanError)
         // ניתן להחליט איך לטפל במצב כזה, לדוגמה להעביר למסך שגיאה או להתנתק
         setAuthStatus('unauthenticated')
         return
@@ -422,19 +415,12 @@ const MatchesTab = ({
 
   const loadActiveSession = async () => {
     try {
-      console.log('🔄 טוען סשן פעיל...')
       const activeSession = await getActiveSession()
       if (activeSession && activeSession.session_data.length > 0) {
         // טעינת ההתאמות כמו שהן - ללא שינוי סטטוס
         const matches: MatchProposal[] = activeSession.session_data as MatchProposal[];
         
-        // הדפסת סטטוסים לדיבוג
-        console.log('📊 סטטוסי התאמות שנטענו:', matches.map(m => ({ id: m.id, status: m.status, names: `${m.maleName} ↔ ${m.femaleName}` })))
-        
         setMatches(matches);
-        console.log('✅ טעון סשן פעיל עם', activeSession.session_data.length, 'התאמות')
-      } else {
-        console.log('ℹ️ אין סשן פעיל או שהוא ריק')
       }
     } catch (error) {
       console.error('❌ שגיאה בטעינת סשן פעיל:', error)
@@ -473,7 +459,6 @@ const MatchesTab = ({
       })
       
       // בדיקת חיבור למערכת לפני התחלה
-      console.log('🔍 בודק חיבור למערכת...')
       setGlobalScanState({
         isScanning: true,
         progress: { current: 10, total: 100, message: 'בודק חיבור למערכת...' }
@@ -483,10 +468,8 @@ const MatchesTab = ({
       if (!authCheck.isConnected) {
         throw new Error(authCheck.error || 'שגיאה בחיבור למערכת')
       }
-      console.log('✅ חיבור למערכת תקין')
 
       // טעינת נתוני מועמדים
-      console.log('טוען נתוני מועמדים...')
       setGlobalScanState({
         isScanning: true,
         progress: { current: 30, total: 100, message: 'טוען נתוני מועמדים מהגיליון...' }
@@ -505,7 +488,6 @@ const MatchesTab = ({
       }
 
       // יצירת התאמות עם AI
-      console.log('יוצר התאמות עם AI...')
       setGlobalScanState({
         isScanning: true,
         progress: { current: 60, total: 100, message: 'מנתח מועמדים עם בינה מלאכותית...' }
@@ -542,8 +524,6 @@ const MatchesTab = ({
       
       setMatches(generatedMatches)
       setLoading(false)
-      
-      console.log(`✅ הושלם! נוצרו ${generatedMatches.length} התאמות`)
       
       // איפוס מצב הסריקה אחרי הצגת הודעת הצלחה
       setTimeout(() => {
@@ -698,18 +678,10 @@ const MatchesTab = ({
               accessToken={accessToken}
                               onStatusUpdate={async (matchId, newStatus) => {
                   try {
-                    console.log('🔄 מתחיל עדכון סטטוס בממשק:', { matchId, newStatus })
-                    console.log('📊 מערך התאמות נוכחי לפני עדכון:', matches.map(m => ({ id: m.id, status: m.status, names: `${m.maleName} ↔ ${m.femaleName}` })))
-                    
                     // שימוש בפונקציה המרכזית לעדכון סטטוס
                     const updatedMatches = await updateMatchStatus(matches, matchId, newStatus, onProposalCountChange)
                     
-                    console.log('📊 מערך התאמות אחרי עדכון:', updatedMatches.map(m => ({ id: m.id, status: m.status, names: `${m.maleName} ↔ ${m.femaleName}` })))
-                    
                     setMatches(updatedMatches)
-                    
-                    // הודעת הצלחה לעדכון הממשק
-                    console.log(`✅ עודכן סטטוס הצעה ${matchId} ל-${newStatus}`)
                     
                     // אם ההצעה אושרה, תוצג הודעה נוספת
                     if (newStatus === 'ready_for_processing') {
@@ -833,8 +805,6 @@ const MatchesTab = ({
 
 // פונקציית עזר לעדכון סטטוס התאמה
 const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newStatus: 'ready_for_processing' | 'rejected', onProposalCountChange?: (count: number) => void) => {
-  console.log('🔄 מעדכן סטטוס התאמה:', { matchId, newStatus, currentMatchesLength: matches.length })
-  
   // עדכון המערך המקומי
   const updatedMatches = matches.map(m => 
     m.id === matchId ? { ...m, status: newStatus } : m
@@ -853,7 +823,6 @@ const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newS
       )
       
       await updateActiveSession(updatedSessionData)
-      console.log('✅ סשן פעיל עודכן עם סטטוס חדש')
     }
   } catch (error) {
     console.error('❌ שגיאה בעדכון סשן פעיל:', error)
@@ -872,14 +841,12 @@ const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newS
         // המתנה קצרה לוודא שההצעה נשמרה במסד הנתונים
         setTimeout(async () => {
           try {
-            console.log('🔍 בודק מספר הצעות פעילות לאחר אישור...')
             const { data: currentProposals } = await supabase
               .from('match_proposals')
               .select('id')
               .in('status', ['ready_for_processing', 'ready_for_contact', 'contacting', 'awaiting_response', 'meeting_scheduled', 'meeting_completed', 'completed', 'rejected_by_candidate', 'closed', 'in_meeting_process'])
             
             const newCount = currentProposals?.length || 0
-            console.log('📊 נמצאו', newCount, 'הצעות פעילות, מעדכן מונה...')
             onProposalCountChange(newCount)
           } catch (error) {
             console.error('שגיאה בעדכון מונה הצעות:', error)
@@ -2255,27 +2222,7 @@ const ProfilesModal = ({
   onClose: () => void 
 }) => {
   const renderProfile = (profile: any, title: string) => {
-    // דיבוג פרטי מועמד בחלון הפרטים
-    console.log(`🔍 דיבוג פרטי מועמד בחלון הפרטים - ${title}:`, {
-      profileObject: profile,
-      profileType: typeof profile,
-      profileKeys: profile ? Object.keys(profile) : [],
-      emailField: profile?.email || 'ריק',
-      phoneField: profile?.phone || 'ריק',
-      contactField: profile?.contact || 'ריק',
-      previouslyProposedField: profile?.previouslyProposed || 'ריק',
-      currentlyProposedField: profile?.currentlyProposed || 'ריק',
-      allFieldsWithValues: profile ? Object.entries(profile).filter(([key, value]) => value && value !== '').map(([key, value]) => `${key}: ${value}`) : [],
-      searchForEmailPattern: profile ? Object.entries(profile).filter(([key, value]) => value && typeof value === 'string' && value.includes('@')).map(([key, value]) => `${key}: ${value}`) : [],
-      // דיבוג נוסף - איפה פותחים את החלון
-      callerInfo: {
-        isFromEnhancedProposal: profile?.id?.includes('male_') || profile?.id?.includes('female_'),
-        isFromMatchData: profile?.boy_data !== undefined || profile?.girl_data !== undefined,
-        profileIdFormat: profile?.id,
-        // בדיקה אם זה מהטאב הצעות פעילות או התאמות חדשות
-        likelySource: profile?.id?.includes('male_') || profile?.id?.includes('female_') ? 'נטען מהגיליון (הצעות פעילות)' : 'נשמר בסשן (התאמות חדשות)'
-      }
-    })
+ 
 
     if (!profile) {
       return (

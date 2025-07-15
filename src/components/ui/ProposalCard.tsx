@@ -15,7 +15,8 @@ import {
   MessageCircle,
   CheckCircle,
   X,
-  Copy
+  Copy,
+  Loader2
 } from 'lucide-react'
 import { Button } from './Button'
 import { Card } from './Card'
@@ -45,26 +46,50 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({
   const [showGirlRejectionModal, setShowGirlRejectionModal] = useState(false)
   const [boyRejectionReason, setBoyRejectionReason] = useState('')
   const [girlRejectionReason, setGirlRejectionReason] = useState('')
-
-  // דיבוג הצעה בקומפוננט ProposalCard
-  console.log(`🔍 דיבוג הצעה בקומפוננט ProposalCard - ${proposal.id}:`, {
-    proposalId: proposal.id,
-    proposalObject: proposal,
-    boyDetails: proposal.boyDetails,
-    girlDetails: proposal.girlDetails,
-    boyDetailsKeys: proposal.boyDetails ? Object.keys(proposal.boyDetails) : [],
-    girlDetailsKeys: proposal.girlDetails ? Object.keys(proposal.girlDetails) : [],
-    boyEmail: proposal.boyDetails?.email || 'ריק',
-    boyPhone: proposal.boyDetails?.phone || 'ריק',
-    boyContact: proposal.boyDetails?.contact || 'ריק',
-    boyPreviouslyProposed: proposal.boyDetails?.previouslyProposed || 'ריק',
-    girlEmail: proposal.girlDetails?.email || 'ריק',
-    girlPhone: proposal.girlDetails?.phone || 'ריק',
-    girlContact: proposal.girlDetails?.contact || 'ריק',
-    girlPreviouslyProposed: proposal.girlDetails?.previouslyProposed || 'ריק',
-    boyEmailPatterns: proposal.boyDetails ? Object.entries(proposal.boyDetails).filter(([, value]) => value && typeof value === 'string' && value.includes('@')).map(([key, value]) => `${key}: ${value}`) : [],
-    girlEmailPatterns: proposal.girlDetails ? Object.entries(proposal.girlDetails).filter(([, value]) => value && typeof value === 'string' && value.includes('@')).map(([key, value]) => `${key}: ${value}`) : []
+  
+  // מצבי טעינה ספציפיים לכל פעולה
+  const [loadingStates, setLoadingStates] = useState({
+    boyInterested: false,
+    boyNotInterested: false,
+    boyNeedsTime: false,
+    girlInterested: false,
+    girlNotInterested: false,
+    girlNeedsTime: false,
+    statusUpdate: false,
+    addNote: false,
+    editNote: false,
+    deleteNote: false
   })
+
+  // פונקציה לעדכון מצב טעינה ספציפי
+  const setLoadingState = (key: keyof typeof loadingStates, value: boolean) => {
+    setLoadingStates(prev => ({ ...prev, [key]: value }))
+  }
+
+
+  // אמחק את השורות הבאות:
+  // console.log(`🔍 דיבוג הצעה בקומפוננט ProposalCard - ${proposal.id}:`, {
+  // console.log('🔄 מעדכן סטטוס:', { proposalId: proposal.id, newStatus, notes })
+  // console.log('✅ תוצאת עדכון סטטוס:', success)
+  // console.log('🔄 מרענן נתוני הצעות...')
+  // console.error('❌ שגיאה בעדכון סטטוס:', error)
+  // console.log('📝 מוסיף הערה:', { proposalId: proposal.id, notes })
+  // console.log('✅ תוצאת הוספת הערה:', success)
+  // console.log('🔄 מרענן נתוני הצעות...')
+  // console.error('❌ שגיאה בהוספת הערה:', error)
+  // console.log('✏️ עורך הערה:', { proposalId: proposal.id, noteIndex, newContent })
+  // console.log('✅ תוצאת עריכת הערה:', success)
+  // console.log('🔄 מרענן נתוני הצעות...')
+  // console.error('❌ שגיאה בעריכת הערה:', error)
+  // console.log('🗑️ מוחק הערה:', { proposalId: proposal.id, noteIndex })
+  // console.log('✅ תוצאת מחיקת הערה:', success)
+  // console.log('🔄 מרענן נתוני הצעות...')
+  // console.error('❌ שגיאה במחיקת הערה:', error)
+  // console.error('שגיאה בהעתקה:', error)
+  // console.error('❌ שגיאה בעדכון תגובת מועמד:', error)
+  // console.log('�� בדיקת הערות עבור הצעה:', proposal.id, {
+
+  // אמחק את כל השורות שמתחילות ב-console.
 
   // פונקציה ליצירת קישור WhatsApp
   const getWhatsAppLink = (phone: string, name: string, partnerName: string) => {
@@ -141,63 +166,103 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({
   }
 
   const handleStatusUpdate = async (newStatus: string, notes?: string) => {
+    setLoadingState('statusUpdate', true)
     setIsUpdating(true)
-    console.log('🔄 מעדכן סטטוס:', { proposalId: proposal.id, newStatus, notes })
+    
+    // הודעת משוב מיידית
+    const tempMessage = document.createElement('div')
+    tempMessage.className = 'fixed top-4 right-4 bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 transition-all duration-300'
+    tempMessage.textContent = '🔄 מעדכן סטטוס הצעה...'
+    document.body.appendChild(tempMessage)
+    
+
     try {
       const success = await updateProposalStatus(proposal.id, newStatus, notes)
-      console.log('✅ תוצאת עדכון סטטוס:', success)
+      
+      // הסרת הודעת הטעינה
+      if (document.body.contains(tempMessage)) {
+        document.body.removeChild(tempMessage)
+      }
+      
       if (success && onUpdate) {
-        console.log('🔄 מרענן נתוני הצעות...')
         await onUpdate()
         // הצגת הודעת הצלחה
         showSuccessMessage('✅ הסטטוס עודכן בהצלחה')
+      } else {
+        showErrorMessage('❌ שגיאה בעדכון הסטטוס')
       }
     } catch (error) {
-      console.error('❌ שגיאה בעדכון סטטוס:', error)
+      // הסרת הודעת הטעינה
+      if (document.body.contains(tempMessage)) {
+        document.body.removeChild(tempMessage)
+      }
+      
+
       showErrorMessage('❌ שגיאה בעדכון הסטטוס')
     } finally {
+      setLoadingState('statusUpdate', false)
       setIsUpdating(false)
       setShowStatusModal(false)
     }
   }
 
   const handleAddNote = async (notes: string) => {
+    setLoadingState('addNote', true)
     setIsUpdating(true)
-    console.log('📝 מוסיף הערה:', { proposalId: proposal.id, notes })
+    
+    // הודעת משוב מיידית
+    const tempMessage = document.createElement('div')
+    tempMessage.className = 'fixed top-4 right-4 bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 transition-all duration-300'
+    tempMessage.textContent = '🔄 מוסיף הערה...'
+    document.body.appendChild(tempMessage)
+    
+
     try {
       // שמירת הערה בלי שינוי סטטוס - נשתמש בסטטוס הנוכחי
       const success = await updateProposalStatus(proposal.id, proposal.status, notes)
-      console.log('✅ תוצאת הוספת הערה:', success)
-      if (success && onUpdate) {
-        console.log('🔄 מרענן נתוני הצעות...')
+      
+      // הסרת הודעת הטעינה
+      if (document.body.contains(tempMessage)) {
+        document.body.removeChild(tempMessage)
+      }
+      
+              if (success && onUpdate) {
         await onUpdate()
         // הצגת הודעת הצלחה
         showSuccessMessage('✅ ההערה נוספה בהצלחה')
+      } else {
+        showErrorMessage('❌ שגיאה בהוספת הערה')
       }
     } catch (error) {
-      console.error('❌ שגיאה בהוספת הערה:', error)
+      // הסרת הודעת הטעינה
+      if (document.body.contains(tempMessage)) {
+        document.body.removeChild(tempMessage)
+      }
+      
+
       showErrorMessage('❌ שגיאה בהוספת הערה')
     } finally {
+      setLoadingState('addNote', false)
       setIsUpdating(false)
       setShowNoteModal(false)
     }
   }
 
   const handleEditNote = async (noteIndex: number, newContent: string) => {
+    setLoadingState('editNote', true)
     setIsUpdating(true)
-    console.log('✏️ עורך הערה:', { proposalId: proposal.id, noteIndex, newContent })
+
     try {
       const success = await editProposalNote(proposal.id, noteIndex, newContent)
-      console.log('✅ תוצאת עריכת הערה:', success)
-      if (success && onUpdate) {
-        console.log('🔄 מרענן נתוני הצעות...')
+              if (success && onUpdate) {
         await onUpdate()
         showSuccessMessage('✅ ההערה עודכנה בהצלחה')
       }
     } catch (error) {
-      console.error('❌ שגיאה בעריכת הערה:', error)
+
       showErrorMessage('❌ שגיאה בעריכת הערה')
     } finally {
+      setLoadingState('editNote', false)
       setIsUpdating(false)
       setEditingNoteIndex(null)
       setEditNoteContent('')
@@ -209,20 +274,20 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({
       return
     }
     
+    setLoadingState('deleteNote', true)
     setIsUpdating(true)
-    console.log('🗑️ מוחק הערה:', { proposalId: proposal.id, noteIndex })
+
     try {
       const success = await deleteProposalNote(proposal.id, noteIndex)
-      console.log('✅ תוצאת מחיקת הערה:', success)
-      if (success && onUpdate) {
-        console.log('🔄 מרענן נתוני הצעות...')
+              if (success && onUpdate) {
         await onUpdate()
         showSuccessMessage('✅ ההערה נמחקה בהצלחה')
       }
     } catch (error) {
-      console.error('❌ שגיאה במחיקת הערה:', error)
+
       showErrorMessage('❌ שגיאה במחיקת הערה')
     } finally {
+      setLoadingState('deleteNote', false)
       setIsUpdating(false)
     }
   }
@@ -280,8 +345,80 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({
       const message = type === 'phone' ? '📞 מספר הטלפון הועתק' : '📧 כתובת המייל הועתקה'
       showSuccessMessage(message)
     } catch (error) {
-      console.error('שגיאה בהעתקה:', error)
+      
       showErrorMessage('❌ שגיאה בהעתקה')
+    }
+  }
+
+  // פונקציה לטיפול בתגובת מועמד עם משוב מיידי
+  const handleCandidateResponse = async (
+    side: 'boy' | 'girl',
+    response: 'interested' | 'not_interested' | 'needs_time',
+    rejectionReason?: string
+  ) => {
+    // יצירת מפתח הטעינה הנכון
+    let loadingKey: keyof typeof loadingStates
+    if (response === 'interested') {
+      loadingKey = `${side}Interested` as keyof typeof loadingStates
+    } else if (response === 'not_interested') {
+      loadingKey = `${side}NotInterested` as keyof typeof loadingStates
+    } else { // needs_time
+      loadingKey = `${side}NeedsTime` as keyof typeof loadingStates
+    }
+    
+    setLoadingState(loadingKey, true)
+    
+    // עדכון אופטימיסטי מיידי - מעדכן את הממשק לפני שהשרת מגיב
+    const originalResponse = proposal[`${side}_response`]
+    proposal[`${side}_response`] = response
+    
+    // הצגת הודעת משוב מיידית
+    const candidateType = side === 'boy' ? 'מועמד' : 'מועמדת'
+    const responseText = response === 'interested' ? 'מעוניין/ת' : 
+                        response === 'not_interested' ? 'לא מעוניין/ת' : 'צריך/ה זמן'
+    
+    // הודעת משוב מיידית
+    const tempMessage = document.createElement('div')
+    tempMessage.className = 'fixed top-4 right-4 bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 transition-all duration-300'
+    tempMessage.textContent = `🔄 מעדכן תגובת ${candidateType}: ${responseText}...`
+    document.body.appendChild(tempMessage)
+    
+    try {
+      const success = await updateCandidateResponse(
+        proposal.id, 
+        side, 
+        response, 
+        shadchanId, 
+        rejectionReason,
+        proposal.boyDetails?.name,
+        proposal.girlDetails?.name
+      )
+      
+      // הסרת הודעת הטעינה
+      if (document.body.contains(tempMessage)) {
+        document.body.removeChild(tempMessage)
+      }
+      
+      if (success && onUpdate) {
+        await onUpdate()
+        showSuccessMessage(`✅ תגובת ${candidateType} עודכנה בהצלחה`)
+      } else {
+        // במקרה של כישלון, נחזיר את הערך המקורי
+        proposal[`${side}_response`] = originalResponse
+        showErrorMessage(`❌ שגיאה בעדכון תגובת ${candidateType}`)
+      }
+    } catch (error) {
+      // הסרת הודעת הטעינה
+      if (document.body.contains(tempMessage)) {
+        document.body.removeChild(tempMessage)
+      }
+      
+      // החזרת הערך המקורי במקרה של שגיאה
+      proposal[`${side}_response`] = originalResponse
+
+      showErrorMessage(`❌ שגיאה בעדכון תגובת ${candidateType}`)
+    } finally {
+      setLoadingState(loadingKey, false)
     }
   }
 
@@ -328,10 +465,14 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({
                   size="sm"
                   variant="outline"
                   onClick={() => setShowStatusModal(true)}
-                  className="border-0 text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-3 py-1.5 text-xs font-medium shadow-none"
-                  disabled={isUpdating}
+                  className="border-0 text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-3 py-1.5 text-xs font-medium shadow-none transition-colors duration-200"
+                  disabled={loadingStates.statusUpdate || isUpdating}
                 >
-                  <PenTool className="w-4 h-4 ml-1" />
+                  {loadingStates.statusUpdate ? (
+                    <Loader2 className="w-4 h-4 ml-1 animate-spin" />
+                  ) : (
+                    <PenTool className="w-4 h-4 ml-1" />
+                  )}
                   עדכון סטטוס
                 </Button>
                 
@@ -339,7 +480,7 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({
                   size="sm"
                   variant="outline"
                   onClick={() => onViewProfiles?.(proposal)}
-                  className="border-0 text-gray-600 hover:text-gray-800 hover:bg-gray-100 px-3 py-1.5 text-xs font-medium shadow-none"
+                  className="border-0 text-gray-600 hover:text-gray-800 hover:bg-gray-100 px-3 py-1.5 text-xs font-medium shadow-none transition-colors duration-200"
                   disabled={isUpdating}
                 >
                   <Eye className="w-4 h-4 ml-1" />
@@ -509,71 +650,59 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({
                   <div className="grid grid-cols-3 gap-2">
                     <Button
                       size="sm"
-                      onClick={async () => {
-                        if (isUpdating) return; // מניעת לחיצות כפולות
-                        setIsUpdating(true)
-                        try {
-                          const success = await updateCandidateResponse(proposal.id, 'boy', 'interested', shadchanId)
-                          if (success && onUpdate) {
-                            await onUpdate()
-                            showSuccessMessage('✅ תגובת מועמד עודכנה בהצלחה')
-                          }
-                        } catch (error) {
-                          console.error('❌ שגיאה בעדכון תגובת מועמד:', error)
-                          showErrorMessage('❌ שגיאה בעדכון תגובת המועמד')
-                        } finally {
-                          setIsUpdating(false)
-                        }
-                      }}
-                      className={`min-h-[36px] px-2 py-2 text-xs transition-all duration-200 ${
+                      variant={proposal.boy_response === 'interested' ? 'primary' : 'outline'}
+                      onClick={() => handleCandidateResponse('boy', 'interested')}
+                      disabled={loadingStates.boyInterested || isUpdating}
+                      className={`min-h-[36px] px-2 py-2 text-xs transition-colors duration-200 ${
                         proposal.boy_response === 'interested' 
-                          ? 'bg-green-600 hover:bg-green-700 text-white shadow-lg border-2 border-green-600 font-bold' 
-                          : 'bg-white hover:bg-green-50 text-green-700 border-2 border-green-300 hover:border-green-400 shadow-sm'
-                      } ${isUpdating ? 'cursor-wait' : 'cursor-pointer'}`}
+                          ? '!bg-green-600 !hover:bg-green-700 !text-white !border-green-600 shadow-lg font-bold ring-2 ring-green-200' 
+                          : 'text-green-700 border-green-300 hover:border-green-400 hover:bg-green-50 shadow-sm hover:shadow-md'
+                      } ${loadingStates.boyInterested || isUpdating ? 'cursor-wait opacity-75' : 'cursor-pointer'}`}
                     >
-                      <CheckCircle className="h-3 w-3 mr-1 flex-shrink-0" />
+                      {loadingStates.boyInterested ? (
+                        <Loader2 className="h-3 w-3 mr-1 animate-spin flex-shrink-0" />
+                      ) : (
+                        <CheckCircle className="h-3 w-3 mr-1 flex-shrink-0" />
+                      )}
                       <span className="whitespace-nowrap">מעוניין</span>
                     </Button>
                     <Button
                       size="sm"
+                      variant="outline"
                       onClick={() => {
-                        if (isUpdating) return; // מניעת לחיצות כפולות
+                        if (loadingStates.boyNotInterested || isUpdating) return
                         setShowBoyRejectionModal(true)
                       }}
-                      className={`min-h-[36px] px-2 py-2 text-xs transition-all duration-200 ${
+                      disabled={loadingStates.boyNotInterested || isUpdating}
+                      className={`min-h-[36px] px-2 py-2 text-xs transition-colors duration-200 ${
                         proposal.boy_response === 'not_interested' 
-                          ? 'bg-red-600 hover:bg-red-700 text-white shadow-lg border-2 border-red-600 font-bold' 
-                          : 'bg-white hover:bg-red-50 text-red-700 border-2 border-red-300 hover:border-red-400 shadow-sm'
-                      } ${isUpdating ? 'cursor-wait' : 'cursor-pointer'}`}
+                          ? '!bg-red-600 !hover:bg-red-700 !text-white !border-red-600 shadow-lg font-bold ring-2 ring-red-200' 
+                          : 'text-red-700 border-red-300 hover:border-red-400 hover:bg-red-50 shadow-sm hover:shadow-md'
+                      } ${loadingStates.boyNotInterested || isUpdating ? 'cursor-wait opacity-75' : 'cursor-pointer'}`}
                     >
-                      <X className="h-3 w-3 mr-1 flex-shrink-0" />
+                      {loadingStates.boyNotInterested ? (
+                        <Loader2 className="h-3 w-3 mr-1 animate-spin flex-shrink-0" />
+                      ) : (
+                        <X className="h-3 w-3 mr-1 flex-shrink-0" />
+                      )}
                       <span className="whitespace-nowrap">לא מעוניין</span>
                     </Button>
                     <Button
                       size="sm"
-                      onClick={async () => {
-                        if (isUpdating) return; // מניעת לחיצות כפולות
-                        setIsUpdating(true)
-                        try {
-                          const success = await updateCandidateResponse(proposal.id, 'boy', 'needs_time', shadchanId)
-                          if (success && onUpdate) {
-                            await onUpdate()
-                            showSuccessMessage('✅ תגובת מועמד עודכנה בהצלחה')
-                          }
-                        } catch (error) {
-                          console.error('❌ שגיאה בעדכון תגובת מועמד:', error)
-                          showErrorMessage('❌ שגיאה בעדכון תגובת המועמד')
-                        } finally {
-                          setIsUpdating(false)
-                        }
-                      }}
-                      className={`min-h-[36px] px-2 py-2 text-xs transition-all duration-200 ${
+                      variant={proposal.boy_response === 'needs_time' ? 'primary' : 'outline'}
+                      onClick={() => handleCandidateResponse('boy', 'needs_time')}
+                      disabled={loadingStates.boyNeedsTime || isUpdating}
+                      className={`min-h-[36px] px-2 py-2 text-xs transition-colors duration-200 ${
                         proposal.boy_response === 'needs_time' 
-                          ? 'bg-yellow-600 hover:bg-yellow-700 text-white shadow-lg border-2 border-yellow-600 font-bold' 
-                          : 'bg-white hover:bg-yellow-50 text-yellow-700 border-2 border-yellow-300 hover:border-yellow-400 shadow-sm'
-                      } ${isUpdating ? 'cursor-wait' : 'cursor-pointer'}`}
+                          ? '!bg-yellow-600 !hover:bg-yellow-700 !text-white !border-yellow-600 shadow-lg font-bold ring-2 ring-yellow-200' 
+                          : 'text-yellow-700 border-yellow-300 hover:border-yellow-400 hover:bg-yellow-50 shadow-sm hover:shadow-md'
+                      } ${loadingStates.boyNeedsTime || isUpdating ? 'cursor-wait opacity-75' : 'cursor-pointer'}`}
                     >
-                      <Clock className="h-3 w-3 mr-1 flex-shrink-0" />
+                      {loadingStates.boyNeedsTime ? (
+                        <Loader2 className="h-3 w-3 mr-1 animate-spin flex-shrink-0" />
+                      ) : (
+                        <Clock className="h-3 w-3 mr-1 flex-shrink-0" />
+                      )}
                       <span className="whitespace-nowrap">צריך זמן</span>
                     </Button>
                   </div>
@@ -739,71 +868,59 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({
                   <div className="grid grid-cols-3 gap-2">
                     <Button
                       size="sm"
-                      onClick={async () => {
-                        if (isUpdating) return; // מניעת לחיצות כפולות
-                        setIsUpdating(true)
-                        try {
-                          const success = await updateCandidateResponse(proposal.id, 'girl', 'interested', shadchanId)
-                          if (success && onUpdate) {
-                            await onUpdate()
-                            showSuccessMessage('✅ תגובת מועמדת עודכנה בהצלחה')
-                          }
-                        } catch (error) {
-                          console.error('❌ שגיאה בעדכון תגובת מועמדת:', error)
-                          showErrorMessage('❌ שגיאה בעדכון תגובת המועמדת')
-                        } finally {
-                          setIsUpdating(false)
-                        }
-                      }}
-                      className={`min-h-[36px] px-2 py-2 text-xs transition-all duration-200 ${
+                      variant={proposal.girl_response === 'interested' ? 'primary' : 'outline'}
+                      onClick={() => handleCandidateResponse('girl', 'interested')}
+                      disabled={loadingStates.girlInterested || isUpdating}
+                      className={`min-h-[36px] px-2 py-2 text-xs transition-colors duration-200 ${
                         proposal.girl_response === 'interested' 
-                          ? 'bg-green-600 hover:bg-green-700 text-white shadow-lg border-2 border-green-600 font-bold' 
-                          : 'bg-white hover:bg-green-50 text-green-700 border-2 border-green-300 hover:border-green-400 shadow-sm'
-                      } ${isUpdating ? 'cursor-wait' : 'cursor-pointer'}`}
+                          ? '!bg-green-600 !hover:bg-green-700 !text-white !border-green-600 shadow-lg font-bold ring-2 ring-green-200' 
+                          : 'text-green-700 border-green-300 hover:border-green-400 hover:bg-green-50 shadow-sm hover:shadow-md'
+                      } ${loadingStates.girlInterested || isUpdating ? 'cursor-wait opacity-75' : 'cursor-pointer'}`}
                     >
-                      <CheckCircle className="h-3 w-3 mr-1 flex-shrink-0" />
+                      {loadingStates.girlInterested ? (
+                        <Loader2 className="h-3 w-3 mr-1 animate-spin flex-shrink-0" />
+                      ) : (
+                        <CheckCircle className="h-3 w-3 mr-1 flex-shrink-0" />
+                      )}
                       <span className="whitespace-nowrap">מעוניינת</span>
                     </Button>
                     <Button
                       size="sm"
+                      variant="outline"
                       onClick={() => {
-                        if (isUpdating) return; // מניעת לחיצות כפולות
+                        if (loadingStates.girlNotInterested || isUpdating) return
                         setShowGirlRejectionModal(true)
                       }}
-                      className={`min-h-[36px] px-2 py-2 text-xs transition-all duration-200 ${
+                      disabled={loadingStates.girlNotInterested || isUpdating}
+                      className={`min-h-[36px] px-2 py-2 text-xs transition-colors duration-200 ${
                         proposal.girl_response === 'not_interested' 
-                          ? 'bg-red-600 hover:bg-red-700 text-white shadow-lg border-2 border-red-600 font-bold' 
-                          : 'bg-white hover:bg-red-50 text-red-700 border-2 border-red-300 hover:border-red-400 shadow-sm'
-                      } ${isUpdating ? 'cursor-wait' : 'cursor-pointer'}`}
+                          ? '!bg-red-600 !hover:bg-red-700 !text-white !border-red-600 shadow-lg font-bold ring-2 ring-red-200' 
+                          : 'text-red-700 border-red-300 hover:border-red-400 hover:bg-red-50 shadow-sm hover:shadow-md'
+                      } ${loadingStates.girlNotInterested || isUpdating ? 'cursor-wait opacity-75' : 'cursor-pointer'}`}
                     >
-                      <X className="h-3 w-3 mr-1 flex-shrink-0" />
+                      {loadingStates.girlNotInterested ? (
+                        <Loader2 className="h-3 w-3 mr-1 animate-spin flex-shrink-0" />
+                      ) : (
+                        <X className="h-3 w-3 mr-1 flex-shrink-0" />
+                      )}
                       <span className="whitespace-nowrap">לא מעוניינת</span>
                     </Button>
                     <Button
                       size="sm"
-                      onClick={async () => {
-                        if (isUpdating) return; // מניעת לחיצות כפולות
-                        setIsUpdating(true)
-                        try {
-                          const success = await updateCandidateResponse(proposal.id, 'girl', 'needs_time', shadchanId)
-                          if (success && onUpdate) {
-                            await onUpdate()
-                            showSuccessMessage('✅ תגובת מועמדת עודכנה בהצלחה')
-                          }
-                        } catch (error) {
-                          console.error('❌ שגיאה בעדכון תגובת מועמדת:', error)
-                          showErrorMessage('❌ שגיאה בעדכון תגובת המועמדת')
-                        } finally {
-                          setIsUpdating(false)
-                        }
-                      }}
-                      className={`min-h-[36px] px-2 py-2 text-xs transition-all duration-200 ${
+                      variant={proposal.girl_response === 'needs_time' ? 'primary' : 'outline'}
+                      onClick={() => handleCandidateResponse('girl', 'needs_time')}
+                      disabled={loadingStates.girlNeedsTime || isUpdating}
+                      className={`min-h-[36px] px-2 py-2 text-xs transition-colors duration-200 ${
                         proposal.girl_response === 'needs_time' 
-                          ? 'bg-yellow-600 hover:bg-yellow-700 text-white shadow-lg border-2 border-yellow-600 font-bold' 
-                          : 'bg-white hover:bg-yellow-50 text-yellow-700 border-2 border-yellow-300 hover:border-yellow-400 shadow-sm'
-                      } ${isUpdating ? 'cursor-wait' : 'cursor-pointer'}`}
+                          ? '!bg-yellow-600 !hover:bg-yellow-700 !text-white !border-yellow-600 shadow-lg font-bold ring-2 ring-yellow-200' 
+                          : 'text-yellow-700 border-yellow-300 hover:border-yellow-400 hover:bg-yellow-50 shadow-sm hover:shadow-md'
+                      } ${loadingStates.girlNeedsTime || isUpdating ? 'cursor-wait opacity-75' : 'cursor-pointer'}`}
                     >
-                      <Clock className="h-3 w-3 mr-1 flex-shrink-0" />
+                      {loadingStates.girlNeedsTime ? (
+                        <Loader2 className="h-3 w-3 mr-1 animate-spin flex-shrink-0" />
+                      ) : (
+                        <Clock className="h-3 w-3 mr-1 flex-shrink-0" />
+                      )}
                       <span className="whitespace-nowrap">צריכה זמן</span>
                     </Button>
                   </div>
@@ -957,12 +1074,7 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({
 
 
         {(() => {
-          console.log('🔍 בדיקת הערות עבור הצעה:', proposal.id, {
-            notes: proposal.notes,
-            notesHistory: proposal.notesHistory,
-            hasNotesHistory: proposal.notesHistory && proposal.notesHistory.length > 0,
-            hasNotes: !!proposal.notes
-          })
+
           return null
         })()}
         <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
@@ -974,10 +1086,14 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({
               size="sm"
               variant="outline"
               onClick={() => setShowNoteModal(true)}
-              className="border-yellow-500 text-yellow-700 hover:bg-yellow-100 text-xs px-2 py-1"
-              disabled={isUpdating}
+              className="border-yellow-500 text-yellow-700 hover:bg-yellow-100 text-xs px-2 py-1 transition-colors duration-200"
+              disabled={loadingStates.addNote || isUpdating}
             >
-              <MessageSquare className="w-3 h-3 mr-1" />
+              {loadingStates.addNote ? (
+                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+              ) : (
+                <MessageSquare className="w-3 h-3 mr-1" />
+              )}
               הוסף הערה
             </Button>
           </div>
@@ -1031,15 +1147,25 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({
                                 onClick={() => startEditingNote(actualIndex, note.content)}
                                 className="p-1 text-yellow-600 hover:text-yellow-800 hover:bg-yellow-200 rounded transition-colors"
                                 title="ערוך הערה"
+                                disabled={loadingStates.editNote}
                               >
-                                <Edit3 className="w-3 h-3" />
+                                {loadingStates.editNote ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <Edit3 className="w-3 h-3" />
+                                )}
                               </button>
                               <button
                                 onClick={() => handleDeleteNote(actualIndex)}
                                 className="p-1 text-red-600 hover:text-red-800 hover:bg-red-200 rounded transition-colors"
                                 title="מחק הערה"
+                                disabled={loadingStates.deleteNote}
                               >
-                                <Trash2 className="w-3 h-3" />
+                                {loadingStates.deleteNote ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <Trash2 className="w-3 h-3" />
+                                )}
                               </button>
                             </div>
                           )}
@@ -1060,16 +1186,19 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({
                             <Button
                               size="sm"
                               onClick={() => handleEditNote(actualIndex, editNoteContent)}
-                              disabled={!editNoteContent.trim() || isUpdating}
+                              disabled={!editNoteContent.trim() || loadingStates.editNote || isUpdating}
                               className="text-xs py-1 px-2"
                             >
-                              שמור
+                              {loadingStates.editNote ? (
+                                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                              ) : null}
+                              {loadingStates.editNote ? 'שומר...' : 'שמור'}
                             </Button>
                             <Button
                               size="sm"
                               variant="outline"
                               onClick={cancelEditingNote}
-                              disabled={isUpdating}
+                              disabled={loadingStates.editNote || isUpdating}
                               className="text-xs py-1 px-2"
                             >
                               ביטול
@@ -1118,6 +1247,7 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({
           proposal={proposal}
           onClose={() => setShowStatusModal(false)}
           onUpdate={handleStatusUpdate}
+          isUpdating={loadingStates.statusUpdate}
         />
       )}
 
@@ -1127,6 +1257,7 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({
           proposal={proposal}
           onClose={() => setShowNoteModal(false)}
           onAddNote={handleAddNote}
+          isUpdating={loadingStates.addNote}
         />
       )}
 
@@ -1158,25 +1289,16 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({
                     return;
                   }
                   
-                  setIsUpdating(true)
-                  try {
-                    const success = await updateCandidateResponse(proposal.id, 'boy', 'not_interested', shadchanId, boyRejectionReason)
-                    if (success && onUpdate) {
-                      await onUpdate()
-                      showSuccessMessage('✅ תגובת מועמד עודכנה בהצלחה')
-                    }
-                  } catch (error) {
-                    console.error('❌ שגיאה בעדכון תגובת מועמד:', error)
-                    showErrorMessage('❌ שגיאה בעדכון תגובת המועמד')
-                  } finally {
-                    setIsUpdating(false)
-                    setShowBoyRejectionModal(false)
-                    setBoyRejectionReason('')
-                  }
+                  await handleCandidateResponse('boy', 'not_interested', boyRejectionReason)
+                  setShowBoyRejectionModal(false)
+                  setBoyRejectionReason('')
                 }}
-                disabled={!boyRejectionReason.trim() || isUpdating}
+                disabled={!boyRejectionReason.trim() || loadingStates.boyNotInterested}
               >
-                שמור דחיה
+                {loadingStates.boyNotInterested ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : null}
+                {loadingStates.boyNotInterested ? 'שומר דחיה...' : 'שמור דחיה'}
               </Button>
               <Button
                 variant="outline"
@@ -1221,25 +1343,16 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({
                     return;
                   }
                   
-                  setIsUpdating(true)
-                  try {
-                    const success = await updateCandidateResponse(proposal.id, 'girl', 'not_interested', shadchanId, girlRejectionReason)
-                    if (success && onUpdate) {
-                      await onUpdate()
-                      showSuccessMessage('✅ תגובת מועמדת עודכנה בהצלחה')
-                    }
-                  } catch (error) {
-                    console.error('❌ שגיאה בעדכון תגובת מועמדת:', error)
-                    showErrorMessage('❌ שגיאה בעדכון תגובת המועמדת')
-                  } finally {
-                    setIsUpdating(false)
-                    setShowGirlRejectionModal(false)
-                    setGirlRejectionReason('')
-                  }
+                  await handleCandidateResponse('girl', 'not_interested', girlRejectionReason)
+                  setShowGirlRejectionModal(false)
+                  setGirlRejectionReason('')
                 }}
-                disabled={!girlRejectionReason.trim() || isUpdating}
+                disabled={!girlRejectionReason.trim() || loadingStates.girlNotInterested}
               >
-                שמור דחיה
+                {loadingStates.girlNotInterested ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : null}
+                {loadingStates.girlNotInterested ? 'שומר דחיה...' : 'שמור דחיה'}
               </Button>
               <Button
                 variant="outline"
@@ -1264,7 +1377,8 @@ const StatusUpdateModal: React.FC<{
   proposal: EnhancedProposal
   onClose: () => void
   onUpdate: (newStatus: string, notes?: string) => void
-}> = ({ proposal, onClose, onUpdate }) => {
+  isUpdating?: boolean
+}> = ({ proposal, onClose, onUpdate, isUpdating = false }) => {
   const [newStatus, setNewStatus] = useState(proposal.status)
   const [notes, setNotes] = useState('')
 
@@ -1339,9 +1453,12 @@ const StatusUpdateModal: React.FC<{
           <Button 
             onClick={handleSubmit} 
             className="flex-1"
-            disabled={!notes.trim()}
+            disabled={!notes.trim() || isUpdating}
           >
-            עדכן סטטוס
+            {isUpdating ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : null}
+            {isUpdating ? 'מעדכן סטטוס...' : 'עדכן סטטוס'}
           </Button>
           <Button variant="outline" onClick={onClose} className="flex-1">
             ביטול
@@ -1357,7 +1474,8 @@ const AddNoteModal: React.FC<{
   proposal: EnhancedProposal
   onClose: () => void
   onAddNote: (notes: string) => void
-}> = ({ onClose, onAddNote }) => {
+  isUpdating?: boolean
+}> = ({ onClose, onAddNote, isUpdating = false }) => {
   const [notes, setNotes] = useState('')
 
   const handleSubmit = () => {
@@ -1389,9 +1507,12 @@ const AddNoteModal: React.FC<{
           <Button 
             onClick={handleSubmit} 
             className="flex-1"
-            disabled={!notes.trim()}
+            disabled={!notes.trim() || isUpdating}
           >
-            הוסף הערה
+            {isUpdating ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : null}
+            {isUpdating ? 'מוסיף הערה...' : 'הוסף הערה'}
           </Button>
           <Button variant="outline" onClick={onClose} className="flex-1">
             ביטול
