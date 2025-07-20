@@ -58,10 +58,18 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
   // פונקציה לטעינת מספר ההצעות הפעילות בלבד (מהירה)
   const loadActiveProposalsCount = useCallback(async () => {
     try {
+      // רק הסטטוסים הרלוונטיים שמופיעים בטאבים שלנו
+      const relevantStatuses = [
+        'ready_for_processing', 
+        'ready_for_contact', 'contacting', 'awaiting_response',
+        'schedule_meeting', 'meeting_scheduled', 'in_meeting_process',
+        'meeting_completed', 'completed'
+      ]
+      
       const { data: currentProposals } = await supabase
         .from('match_proposals')
         .select('id')
-                                             .in('status', ['ready_for_processing', 'ready_for_contact', 'contacting', 'awaiting_response', 'schedule_meeting', 'meeting_scheduled', 'meeting_completed', 'completed', 'rejected_by_candidate', 'closed', 'in_meeting_process']) // עדכון הסטטוסים הנספרים (לא כולל pending)
+        .in('status', relevantStatuses)
       
       const count = currentProposals?.length || 0
       setActiveProposalsCount(count)
@@ -475,8 +483,29 @@ const MatchesTab = ({
         progress: { current: 30, total: 100, message: 'טוען נתוני מועמדים מהגיליון...' }
       })
       
-      // קבלת ה-sheetId מההגדרות או מ-localStorage
-      const sheetId = localStorage.getItem('sheetId')
+      // קבלת ה-sheetId תחילה ממסד הנתונים, ואז מ-localStorage כגיבוי
+      let sheetId = null
+      
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) {
+          const { data: settings } = await supabase
+            .from('shadchanim')
+            .select('google_sheet_id')
+            .eq('auth_user_id', user.id)
+            .single()
+          
+          sheetId = settings?.google_sheet_id
+        }
+      } catch (error) {
+        console.warn('לא ניתן לטעון הגדרות ממסד נתונים, נסה localStorage:', error)
+      }
+      
+      // אם לא נמצא במסד הנתונים, נסה localStorage
+      if (!sheetId) {
+        sheetId = localStorage.getItem('sheetId')
+      }
+      
       if (!sheetId) {
         throw new Error('לא נמצא מזהה גיליון. אנא הגדר את הגיליון בטאב ההגדרות.')
       }
@@ -859,6 +888,262 @@ const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newS
   return updatedMatches
 }
 
+// הגדרת טאבי סטטוס
+const statusTabs = [
+  { 
+    id: 'new', 
+    label: 'חדשות להתחלה', 
+    statuses: ['ready_for_processing'],
+    color: 'yellow' as const,
+    icon: '🆕'
+  },
+  { 
+    id: 'contact', 
+    label: 'בתהליך יצירת קשר', 
+    statuses: ['ready_for_contact', 'contacting', 'awaiting_response'],
+    color: 'blue' as const,
+    icon: '📞'
+  },
+  { 
+    id: 'meetings', 
+    label: 'פגישות ומעקב', 
+    statuses: ['schedule_meeting', 'meeting_scheduled', 'in_meeting_process'],
+    color: 'purple' as const,
+    icon: '📅'
+  },
+  { 
+    id: 'success', 
+    label: 'הצלחות! 🎉', 
+    statuses: ['meeting_completed', 'completed'],
+    color: 'green' as const,
+    icon: '🎉'
+  }
+]
+
+// רכיב שורת הצעה לתצוגת רשימה
+const ProposalListRow = ({ proposal, onClick }: { proposal: EnhancedProposal, onClick: () => void }) => {
+  const getStatusColor = (status: string) => {
+    const colors = {
+      pending: 'bg-blue-100 text-blue-800',
+      ready_for_processing: 'bg-yellow-100 text-yellow-800',
+      rejected: 'bg-red-100 text-red-800',
+      ready_for_contact: 'bg-purple-100 text-purple-800',
+      contacting: 'bg-blue-100 text-blue-800',
+      awaiting_response: 'bg-orange-100 text-orange-800',
+      rejected_by_candidate: 'bg-red-100 text-red-800',
+      schedule_meeting: 'bg-teal-100 text-teal-800',
+      meeting_scheduled: 'bg-cyan-100 text-cyan-800',
+      in_meeting_process: 'bg-green-100 text-green-800',
+      meeting_completed: 'bg-indigo-100 text-indigo-800',
+      completed: 'bg-green-100 text-green-800',
+      closed: 'bg-gray-100 text-gray-800'
+    }
+    return colors[status as keyof typeof colors] || 'bg-blue-100 text-blue-800'
+  }
+
+  const getStatusText = (status: string) => {
+    const texts = {
+      pending: 'ממתין לאישור',
+      ready_for_processing: 'ממתינה לתחילת טיפול',
+      rejected: 'נדחתה',
+      ready_for_contact: 'מוכן ליצירת קשר',
+      contacting: 'יוצר קשר',
+      awaiting_response: 'ממתין לתגובה',
+      rejected_by_candidate: 'נדחתה על ידי מועמד',
+      schedule_meeting: 'לקבוע פגישה',
+      meeting_scheduled: 'פגישה נקבעה',
+      in_meeting_process: 'בתהליך פגישות',
+      meeting_completed: 'פגישה התקיימה',
+      completed: 'מזל טוב! 🎉',
+      closed: 'נסגרה'
+    }
+    return texts[status as keyof typeof texts] || 'התאמה חדשה'
+  }
+
+  return (
+    <div 
+      className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-all cursor-pointer hover:border-blue-300"
+      onClick={onClick}
+    >
+      <div className="flex items-center justify-between">
+        {/* פרטי ההצעה */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-4">
+            {/* שמות וגילאים */}
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-gray-900">
+                💙 {proposal.boyDetails?.name || proposal.boy_data?.name || 'ללא שם'}
+                {(proposal.boyDetails?.age || proposal.boy_data?.age) && (
+                  <span className="text-sm text-gray-600 font-normal"> ({proposal.boyDetails?.age || proposal.boy_data?.age})</span>
+                )}
+              </span>
+              <span className="text-gray-400">↔</span>
+              <span className="font-semibold text-gray-900">
+                💕 {proposal.girlDetails?.name || proposal.girl_data?.name || 'ללא שם'}
+                {(proposal.girlDetails?.age || proposal.girl_data?.age) && (
+                  <span className="text-sm text-gray-600 font-normal"> ({proposal.girlDetails?.age || proposal.girl_data?.age})</span>
+                )}
+              </span>
+            </div>
+            
+            {/* ערים */}
+            {(proposal.boyDetails?.city || proposal.boy_data?.city || proposal.girlDetails?.city || proposal.girl_data?.city) && (
+              <div className="text-sm text-gray-600">
+                📍 {(proposal.boyDetails?.city || proposal.boy_data?.city) && (proposal.girlDetails?.city || proposal.girl_data?.city)
+                      ? `${proposal.boyDetails?.city || proposal.boy_data?.city} ↔ ${proposal.girlDetails?.city || proposal.girl_data?.city}`
+                      : (proposal.boyDetails?.city || proposal.boy_data?.city || proposal.girlDetails?.city || proposal.girl_data?.city || '')}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ציון והתאמה */}
+        <div className="flex items-center gap-4">
+          {/* ציון */}
+          <div className="flex items-center gap-1 bg-blue-50 px-2 py-1 rounded-lg">
+            <span>⭐</span>
+            <span className="font-bold text-blue-600">
+              {proposal.match_score || proposal.finalScore || 'N/A'}
+            </span>
+          </div>
+
+          {/* סטטוס */}
+          <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(proposal.status)}`}>
+            {getStatusText(proposal.status)}
+          </span>
+
+          {/* ימים בתהליך */}
+          {proposal.daysInProcess !== undefined && (
+            <span className="text-xs text-gray-500">
+              {proposal.daysInProcess} ימים
+            </span>
+          )}
+
+          {/* חץ */}
+          <span className="text-gray-400">👆</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// רכיב כרטיס הצעה קומפקטי לתצוגת רשת
+const ProposalGridCard = ({ proposal, onClick }: { proposal: EnhancedProposal, onClick: () => void }) => {
+  const getStatusColor = (status: string) => {
+    const colors = {
+      pending: 'bg-blue-100 text-blue-800',
+      ready_for_processing: 'bg-yellow-100 text-yellow-800',
+      rejected: 'bg-red-100 text-red-800',
+      ready_for_contact: 'bg-purple-100 text-purple-800',
+      contacting: 'bg-blue-100 text-blue-800',
+      awaiting_response: 'bg-orange-100 text-orange-800',
+      rejected_by_candidate: 'bg-red-100 text-red-800',
+      schedule_meeting: 'bg-teal-100 text-teal-800',
+      meeting_scheduled: 'bg-cyan-100 text-cyan-800',
+      in_meeting_process: 'bg-green-100 text-green-800',
+      meeting_completed: 'bg-indigo-100 text-indigo-800',
+      completed: 'bg-green-100 text-green-800',
+      closed: 'bg-gray-100 text-gray-800'
+    }
+    return colors[status as keyof typeof colors] || 'bg-blue-100 text-blue-800'
+  }
+
+  const getStatusText = (status: string) => {
+    const texts = {
+      pending: 'ממתין לאישור',
+      ready_for_processing: 'ממתינה לתחילת טיפול',
+      rejected: 'נדחתה',
+      ready_for_contact: 'מוכן ליצירת קשר',
+      contacting: 'יוצר קשר',
+      awaiting_response: 'ממתין לתגובה',
+      rejected_by_candidate: 'נדחתה על ידי מועמד',
+      schedule_meeting: 'לקבוע פגישה',
+      meeting_scheduled: 'פגישה נקבעה',
+      in_meeting_process: 'בתהליך פגישות',
+      meeting_completed: 'פגישה התקיימה',
+      completed: 'מזל טוב! 🎉',
+      closed: 'נסגרה'
+    }
+    return texts[status as keyof typeof texts] || 'התאמה חדשה'
+  }
+
+  return (
+    <div 
+      className="bg-white border border-gray-200 rounded-lg p-5 hover:shadow-lg transition-all cursor-pointer hover:border-blue-300 min-h-[200px]"
+      onClick={onClick}
+    >
+      {/* כותרת עם ציון */}
+      <div className="flex justify-between items-start mb-4">
+        <div className="flex-1 min-w-0">
+          <h3 className="font-semibold text-gray-900 text-base mb-1">
+            💙 {proposal.boyDetails?.name || proposal.boy_data?.name || 'ללא שם'}
+            {(proposal.boyDetails?.age || proposal.boy_data?.age) && (
+              <span className="text-sm text-gray-600 font-normal"> ({proposal.boyDetails?.age || proposal.boy_data?.age})</span>
+            )}
+          </h3>
+          <h3 className="font-semibold text-gray-900 text-base mb-2">
+            💕 {proposal.girlDetails?.name || proposal.girl_data?.name || 'ללא שם'}
+            {(proposal.girlDetails?.age || proposal.girl_data?.age) && (
+              <span className="text-sm text-gray-600 font-normal"> ({proposal.girlDetails?.age || proposal.girl_data?.age})</span>
+            )}
+          </h3>
+          {(proposal.boyDetails?.city || proposal.boy_data?.city || proposal.girlDetails?.city || proposal.girl_data?.city) && (
+            <p className="text-sm text-gray-600 mb-2">
+              📍 {(proposal.boyDetails?.city || proposal.boy_data?.city) && (proposal.girlDetails?.city || proposal.girl_data?.city)
+                    ? `${proposal.boyDetails?.city || proposal.boy_data?.city} ↔ ${proposal.girlDetails?.city || proposal.girl_data?.city}`
+                    : (proposal.boyDetails?.city || proposal.boy_data?.city || proposal.girlDetails?.city || proposal.girl_data?.city || '')}
+            </p>
+          )}
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-1 bg-blue-50 px-2 py-1 rounded-lg">
+            <span className="text-lg">⭐</span>
+            <span className="font-bold text-xl text-blue-600">
+              {proposal.match_score || proposal.finalScore || 'N/A'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* פרטים נוספים */}
+      <div className="space-y-2 mb-4">
+        {(proposal.boyDetails?.profession || proposal.boy_data?.profession) && (
+          <div className="text-xs text-gray-600">
+            💼 {proposal.boyDetails?.name || proposal.boy_data?.name || 'בן'}: {proposal.boyDetails?.profession || proposal.boy_data?.profession}
+          </div>
+        )}
+        {(proposal.girlDetails?.profession || proposal.girl_data?.profession) && (
+          <div className="text-xs text-gray-600">
+            💼 {proposal.girlDetails?.name || proposal.girl_data?.name || 'בת'}: {proposal.girlDetails?.profession || proposal.girl_data?.profession}
+          </div>
+        )}
+        {proposal.daysInProcess && (
+          <div className="text-xs text-gray-600">
+            ⏱️ {proposal.daysInProcess} ימים בתהליך
+          </div>
+        )}
+      </div>
+
+      {/* סטטוס ותאריך */}
+      <div className="flex justify-between items-center mt-auto">
+        <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(proposal.status)}`}>
+          {getStatusText(proposal.status)}
+        </span>
+        <span className="text-xs text-gray-500">
+          {proposal.created_at ? new Date(proposal.created_at).toLocaleDateString('he-IL') : 
+           proposal.createdAt ? new Date(proposal.createdAt).toLocaleDateString('he-IL') : 
+           'תאריך לא ידוע'}
+        </span>
+      </div>
+
+      {/* אינדיקטור ללחיצה */}
+      <div className="text-center mt-3 pt-2 border-t border-gray-100">
+        <span className="text-xs text-blue-600 font-medium">👆 לחץ לטיפול מלא בהצעה</span>
+      </div>
+    </div>
+  )
+}
+
 // רכיב טאב הצעות
 const ProposalsTab = ({ accessToken, onCountChange, shadchanId }: { accessToken: string | null, onCountChange: (count: number) => void, shadchanId: string | null }) => {
   const [proposals, setProposals] = useState<EnhancedProposal[]>([])
@@ -868,8 +1153,12 @@ const ProposalsTab = ({ accessToken, onCountChange, shadchanId }: { accessToken:
   const [selectedProposal, setSelectedProposal] = useState<EnhancedProposal | null>(null)
   const [isFirstLoad, setIsFirstLoad] = useState(true) // מציין אם זו הטעינה הראשונה
   const [searchText, setSearchText] = useState('') // טקסט החיפוש הנוכחי
+  const [activeStatusTab, setActiveStatusTab] = useState('new') // טאב הסטטוס הפעיל
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>('list') // מצב התצוגה: רשימה או רשת
+  const [selectedProposalForEdit, setSelectedProposalForEdit] = useState<EnhancedProposal | null>(null) // הצעה שנבחרה לעריכה מהרשת
+  const [isInEditMode, setIsInEditMode] = useState(false) // האם אנחנו במצב עריכת הצעה
   const [filter, setFilter] = useState<ProposalsFilter>({
-    status: ['ready_for_processing', 'ready_for_contact', 'contacting', 'awaiting_response', 'schedule_meeting', 'meeting_scheduled', 'meeting_completed', 'completed', 'rejected_by_candidate', 'closed', 'in_meeting_process'], // עדכון הסטטוסים הכלולים בסינון (לא כולל pending)
+    status: ['ready_for_processing', 'ready_for_contact', 'contacting', 'awaiting_response', 'schedule_meeting', 'meeting_scheduled', 'meeting_completed', 'completed', 'in_meeting_process'], // רק הסטטוסים הרלוונטיים (ללא rejected_by_candidate, closed)
     sortBy: 'created_at',
     sortOrder: 'desc'
   })
@@ -883,14 +1172,30 @@ const ProposalsTab = ({ accessToken, onCountChange, shadchanId }: { accessToken:
     }
   }, [accessToken, filter])
 
-  // אתחול filteredProposals כאשר proposals משתנה (ללא חיפוש)
+  // אתחול filteredProposals כאשר proposals משתנה או כאשר הטאב הפעיל משתנה
   useEffect(() => {
-    if (!filter.searchTerm) {
-      setFilteredProposals(proposals)
-    }
-  }, [proposals, filter.searchTerm])
+    const tabFilteredProposals = filterByActiveTab(proposals)
+    applyTextSearch(tabFilteredProposals, filter.searchTerm || '')
+  }, [proposals, filter.searchTerm, activeStatusTab])
 
   // הסרתי את ה-useEffect שמעדכן את המונה כל פעם - זה יוצר עדכונים מיותרים
+
+  // פונקציה לחישוב מספר הצעות בכל טאב
+  const getTabCounts = (allProposals: EnhancedProposal[]) => {
+    const counts: Record<string, number> = {}
+    statusTabs.forEach(tab => {
+      counts[tab.id] = allProposals.filter(p => tab.statuses.includes(p.status)).length
+    })
+    return counts
+  }
+
+  // פונקציה לסינון הצעות לפי טאב פעיל
+  const filterByActiveTab = (allProposals: EnhancedProposal[]) => {
+    const activeTab = statusTabs.find(tab => tab.id === activeStatusTab)
+    if (!activeTab) return allProposals
+    
+    return allProposals.filter(p => activeTab.statuses.includes(p.status))
+  }
 
   // פונקציה ליישום חיפוש טקסט בלבד (לא משפיעה על המונה הכללי)
   const applyTextSearch = (proposalsToFilter: EnhancedProposal[], searchTerm: string) => {
@@ -912,8 +1217,9 @@ const ProposalsTab = ({ accessToken, onCountChange, shadchanId }: { accessToken:
     if (e.key === 'Enter') {
       // עדכון הפילטר עם הטקסט החדש
       setFilter(prev => ({ ...prev, searchTerm: searchText }))
-      // יישום החיפוש על ההצעות הנוכחיות
-      applyTextSearch(proposals, searchText)
+      // יישום החיפוש על ההצעות המסוננות לפי טאב
+      const tabFilteredProposals = filterByActiveTab(proposals)
+      applyTextSearch(tabFilteredProposals, searchText)
     }
   }
 
@@ -921,7 +1227,8 @@ const ProposalsTab = ({ accessToken, onCountChange, shadchanId }: { accessToken:
   const clearSearch = () => {
     setSearchText('')
     setFilter(prev => ({ ...prev, searchTerm: '' }))
-    applyTextSearch(proposals, '')
+    const tabFilteredProposals = filterByActiveTab(proposals)
+    applyTextSearch(tabFilteredProposals, '')
   }
 
   const loadEnhancedProposalsData = async () => {
@@ -977,12 +1284,16 @@ const ProposalsTab = ({ accessToken, onCountChange, shadchanId }: { accessToken:
         })
       }
       
-      // שמירת כל ההצעות (מסוננות בלי חיפוש טקסט)
+      // שמירת כל ההצעות (ללא סינון לפי טאב)
       setProposals(filtered)
-      // יישום חיפוש טקסט על ההצעות המסוננות
-      applyTextSearch(filtered, filter.searchTerm || '')
       
-      // עדכון מספר ההצעות הכולל (לא לפי החיפוש!)
+      // סינון לפי הטאב הפעיל
+      const tabFilteredProposals = filterByActiveTab(filtered)
+      
+      // יישום חיפוש טקסט על ההצעות המסוננות לפי טאב
+      applyTextSearch(tabFilteredProposals, filter.searchTerm || '')
+      
+      // עדכון מספר ההצעות הכולל (כל הטאבים)
       onCountChange(filtered.length)
       setIsFirstLoad(false) // מעכשיו זו לא הטעינה הראשונה
       console.log('✅ מוצגות', filtered.length, 'הצעות פעילות מתוך', enhancedProposals.length, 'כולל')
@@ -1021,6 +1332,12 @@ const ProposalsTab = ({ accessToken, onCountChange, shadchanId }: { accessToken:
             p.id === proposalId ? updatedProposal : p
           )
           onCountChange(newProposals.length) // עדכון המונה
+          
+          // אם זו ההצעה שנבחרה לעריכה, עדכן גם אותה
+          if (selectedProposalForEdit && selectedProposalForEdit.id === proposalId) {
+            setSelectedProposalForEdit(updatedProposal)
+          }
+          
           return newProposals
         })
         console.log('✅ הצעה עודכנה בהצלחה:', proposalId)
@@ -1030,6 +1347,13 @@ const ProposalsTab = ({ accessToken, onCountChange, shadchanId }: { accessToken:
         setProposals(prevProposals => {
           const newProposals = prevProposals.filter(p => p.id !== proposalId)
           onCountChange(newProposals.length) // עדכון המונה
+          
+          // אם זו ההצעה שהיתה נבחרת לעריכה, חזור לרשימה
+          if (selectedProposalForEdit && selectedProposalForEdit.id === proposalId) {
+            setSelectedProposalForEdit(null)
+            setIsInEditMode(false)
+          }
+          
           return newProposals
         })
       }
@@ -1042,6 +1366,54 @@ const ProposalsTab = ({ accessToken, onCountChange, shadchanId }: { accessToken:
 
   if (loading) {
     return <LoadingSpinner message="טוען הצעות פעילות..." />
+  }
+
+  // אם אנחנו במצב עריכה, הצג את מסך הטיפול המלא
+  if (isInEditMode && selectedProposalForEdit) {
+    return (
+      <div className="space-y-6">
+        {/* כותרת עם כפתור חזרה */}
+        <div className="flex items-center gap-4 pb-4 border-b border-gray-200">
+          <button
+            onClick={() => {
+              setIsInEditMode(false)
+              setSelectedProposalForEdit(null)
+            }}
+            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+          >
+            <span className="text-xl">←</span>
+            <span>חזרה להצעות פעילות</span>
+          </button>
+          <div className="h-6 w-px bg-gray-300"></div>
+          <h1 className="text-2xl font-bold text-gray-900">
+            טיפול בהצעה: {selectedProposalForEdit.boyDetails?.name || selectedProposalForEdit.boy_data?.name || 'ללא שם'} ↔ {selectedProposalForEdit.girlDetails?.name || selectedProposalForEdit.girl_data?.name || 'ללא שם'}
+          </h1>
+        </div>
+        
+        {/* תוכן הטיפול המלא */}
+        <ProposalCard
+          proposal={selectedProposalForEdit}
+          onUpdate={async () => {
+            // הפונקציה updateSingleProposal כבר מטפלת בעדכון הנתונים ובעדכון selectedProposalForEdit
+            await updateSingleProposal(selectedProposalForEdit.id)
+          }}
+          onViewProfiles={(proposal) => {
+            // פתיחת ProfilesModal
+            setSelectedProposal(proposal)
+          }}
+          shadchanId={shadchanId!}
+        />
+        
+        {/* מודל צפיה בפרופילים - במסך הטיפול המלא */}
+        {selectedProposal && (
+          <ProfilesModal
+            maleProfile={selectedProposal.boyDetails}
+            femaleProfile={selectedProposal.girlDetails}
+            onClose={() => setSelectedProposal(null)}
+          />
+        )}
+      </div>
+    )
   }
 
   return (
@@ -1064,12 +1436,54 @@ const ProposalsTab = ({ accessToken, onCountChange, shadchanId }: { accessToken:
           </div>
         </div>
       )}
+      
+      {/* טאבי סטטוס - חלוקה לפי שלב התהליך */}
+      <div className="bg-gray-50 rounded-lg p-4 mb-6">
+        <h3 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
+          <span>🔄</span>
+          <span>סינון לפי שלב בתהליך</span>
+        </h3>
+        <nav className="flex flex-wrap gap-2">
+          {statusTabs.map(tab => {
+            const tabCounts = getTabCounts(proposals)
+            const count = tabCounts[tab.id] || 0
+            const isActive = activeStatusTab === tab.id
+            
+            return (
+              <button
+                key={tab.id}
+                className={`px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 transition-all duration-200 ${
+                  isActive
+                    ? 'bg-white shadow-sm border-2 border-blue-200 text-blue-700' 
+                    : 'bg-transparent border-2 border-transparent text-gray-600 hover:bg-white hover:shadow-sm'
+                }`}
+                onClick={() => setActiveStatusTab(tab.id)}
+              >
+                <span>{tab.icon}</span>
+                <span>{tab.label}</span>
+                {count > 0 && (
+                  <span className={`px-2 py-1 text-xs rounded-full font-medium ${
+                    isActive 
+                      ? `bg-${tab.color}-100 text-${tab.color}-800` 
+                      : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </nav>
+      </div>
+      
       {/* כותרת וסינון */}
       <div className="flex justify-between items-center mb-6">
         <div className="flex items-center gap-3">
-          <h2 className="text-xl font-semibold">הצעות פעילות</h2>
+          <h2 className="text-xl font-semibold">
+            {statusTabs.find(tab => tab.id === activeStatusTab)?.label || 'הצעות פעילות'}
+          </h2>
           <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-medium">
-            {proposals.length} הצעות
+            {filteredProposals.length} הצעות
           </span>
           <button
             onClick={loadEnhancedProposalsData}
@@ -1078,6 +1492,32 @@ const ProposalsTab = ({ accessToken, onCountChange, shadchanId }: { accessToken:
           >
             🔄
           </button>
+          
+          {/* כפתורי החלפת תצוגה */}
+          <div className="flex bg-gray-100 rounded-lg p-1">
+            <button
+              onClick={() => setViewMode('list')}
+              className={`px-3 py-1 rounded text-sm font-medium transition-all ${
+                viewMode === 'list'
+                  ? 'bg-white shadow-sm text-gray-900'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+              title="תצוגת רשימה"
+            >
+              📋 רשימה
+            </button>
+            <button
+              onClick={() => setViewMode('grid')}
+              className={`px-3 py-1 rounded text-sm font-medium transition-all ${
+                viewMode === 'grid'
+                  ? 'bg-white shadow-sm text-gray-900'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+              title="תצוגת רשת"
+            >
+              ⚏ רשת
+            </button>
+          </div>
         </div>
         
         {/* פילטרים בסיסיים */}
@@ -1146,23 +1586,55 @@ const ProposalsTab = ({ accessToken, onCountChange, shadchanId }: { accessToken:
           </button>
         </div>
       ) : (
-        <div className="space-y-4">
-          {filteredProposals.map((proposal) => (
-            <ProposalCard
-              key={proposal.id}
-              proposal={proposal}
-              onUpdate={async () => {
-                await updateSingleProposal(proposal.id)
-              }}
-              onViewProfiles={setSelectedProposal}
-              shadchanId={shadchanId!} // העברת shadchanId ל-ProposalCard
-            />
+        <>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+            <div className="flex items-center gap-2">
+              <span className="text-blue-600 text-lg">ℹ️</span>
+              <div>
+                <h4 className="font-medium text-blue-900">
+                  {viewMode === 'grid' ? 'תצוגת רשת - צפיה מהירה' : 'תצוגת רשימה - קומפקטית'}
+                </h4>
+                <p className="text-sm text-blue-700 mt-1">
+                  {viewMode === 'grid' 
+                    ? 'לחץ על כרטיס כדי לפתוח מסך טיפול מלא בהצעה (עדכון סטטוס, הוספת הערות, צפיה בפרופילים, יצירת קשר וכו\').'
+                    : 'לחץ על שורה כדי לפתוח מסך טיפול מלא בהצעה. תצוגה זו מאפשרת סריקה מהירה של כל ההצעות.'
+                  }
+                  {' '}בחר בין תצוגת רשימה לרשת למעלה.
+                </p>
+              </div>
+            </div>
+          </div>
+          
+          <div className={viewMode === 'grid' ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" : "space-y-3"}>
+            {filteredProposals.map((proposal) => (
+            viewMode === 'grid' ? (
+              <ProposalGridCard
+                key={proposal.id}
+                proposal={proposal}
+                onClick={() => {
+                  setSelectedProposalForEdit(proposal)
+                  setIsInEditMode(true)
+                }}
+              />
+            ) : (
+              <ProposalListRow
+                key={proposal.id}
+                proposal={proposal}
+                onClick={() => {
+                  setSelectedProposalForEdit(proposal)
+                  setIsInEditMode(true)
+                }}
+              />
+            )
           ))}
-        </div>
+          </div>
+        </>
       )}
 
-      {/* מודל צפיה בפרופילים */}
-      {selectedProposal && (
+      
+
+      {/* מודל צפיה בפרופילים - רק כשלא במסך טיפול מלא */}
+      {selectedProposal && !isInEditMode && (
         <ProfilesModal
           maleProfile={selectedProposal.boyDetails}
           femaleProfile={selectedProposal.girlDetails}
@@ -1496,10 +1968,19 @@ const ImportTab: React.FC<{ accessToken: string | null }> = ({ accessToken }) =>
         .eq('auth_user_id', user.id)
         .single()
 
-      const sheetId = settings?.google_sheet_id || localStorage.getItem('sheetId')
+      let sheetId = settings?.google_sheet_id
+      if (!sheetId) {
+        sheetId = localStorage.getItem('sheetId')
+      }
+      
       if (!sheetId) {
         setError('נא להגדיר מזהה גיליון בטאב הגדרות')
         return
+      }
+      
+      // שמירה ב-localStorage אם נמצא במסד הנתונים (לביצועים בפעם הבאה)
+      if (settings?.google_sheet_id && !localStorage.getItem('sheetId')) {
+        localStorage.setItem('sheetId', settings.google_sheet_id)
       }
 
       const data = await loadCandidatesFromSheet(accessToken!, sheetId)
@@ -1887,7 +2368,12 @@ const MatchCard = ({ match, matches, onStatusUpdate, accessToken }: {
         .eq('auth_user_id', user.id)
         .single()
 
-      if (!shadchan?.google_sheet_id) {
+      let sheetId = shadchan?.google_sheet_id
+      if (!sheetId) {
+        sheetId = localStorage.getItem('sheetId')
+      }
+
+      if (!sheetId) {
         console.error('❌ לא נמצא מזהה גיליון')
         // שימוש בנתונים הישנים
         setCandidatesData({
@@ -1900,7 +2386,7 @@ const MatchCard = ({ match, matches, onStatusUpdate, accessToken }: {
 
       // טעינת נתונים מהגיליון
       const { loadCandidatesFromSheet } = await import('@/lib/google-sheets')
-      const candidatesData = await loadCandidatesFromSheet(accessToken, shadchan.google_sheet_id)
+      const candidatesData = await loadCandidatesFromSheet(accessToken, sheetId)
       
              // חיפוש המועמדים הספציפיים
        const boyDetails = candidatesData.males.find(m => m.id === match.boy_row_id)

@@ -53,19 +53,7 @@ export const ContactButtons: React.FC<ContactButtonsProps> = ({
     const [isUpdatingResponse, setIsUpdatingResponse] = useState(false);
     const [showRejectionModal, setShowRejectionModal] = useState(false);
     const [rejectionReason, setRejectionReason] = useState('');
-    
-    // דיבוג פרטי קשר בקומפוננט ContactButtons
-   // console.log(`🔍 דיבוג פרטי קשר - ${side === 'boy' ? 'בן' : 'בת'} ${candidate.name}:`, {
-      candidateId: candidate.id,
-      candidateObject: candidate,
-      emailField: candidate.email || 'ריק',
-      phoneField: candidate.phone || 'ריק',
-      contactField: candidate.contact || 'ריק',
-      previouslyProposedField: candidate.previouslyProposed || 'ריק',
-      currentlyProposedField: candidate.currentlyProposed || 'ריק',
-      allFieldsWithValues: Object.entries(candidate).filter(([, value]) => value && value !== '').map(([key, value]) => `${key}: ${value}`),
-      searchForEmailPattern: Object.entries(candidate).filter(([, value]) => value && typeof value === 'string' && value.includes('@')).map(([key, value]) => `${key}: ${value}`)
-    })
+  
     
     const handleWhatsAppClick = () => {
       if (candidate.phone && candidate.phone.trim()) {
