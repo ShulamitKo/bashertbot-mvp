@@ -4,6 +4,136 @@ import { EnhancedProposal } from '../types'
 
 // ============ פונקציות עזר לניהול הצעות ============
 
+// ************ סמנים ויזואליים חכמים 🚦 ************
+
+// פונקציה לקבלת סמנים ויזואליים לפי מצב ההצעה
+export const getProposalIndicators = (proposal: EnhancedProposal): {
+  badges: Array<{ type: 'urgent' | 'waiting' | 'success' | 'warning' | 'info', text: string, icon: string }>,
+  priorityScore: number,
+  isUrgent: boolean
+} => {
+  const badges = []
+  let priorityScore = 0
+  let isUrgent = false
+
+  const status = proposal.status
+  
+  // חישוב ימים מהעדכון האחרון (מתי הסטטוס השתנה)
+  const daysSinceStatusChange = proposal.updated_at ? 
+    Math.floor((new Date().getTime() - new Date(proposal.updated_at).getTime()) / (1000 * 60 * 60 * 24)) : 0
+
+  // 🔥 דחיפות גבוהה (אדום) - דחוף מנצח על הכל
+  
+  // 1. "ממתין לתגובה" 3+ ימים מאז שינוי הסטטוס
+  if (status === 'awaiting_response' && daysSinceStatusChange >= 3) {
+    badges.push({ type: 'urgent' as const, text: 'ממתין זמן רב לתגובה', icon: '🔥' })
+    priorityScore += 10
+    isUrgent = true
+  }
+
+  // 2. "לקבוע פגישה" 1+ יום מאז שינוי הסטטוס (הכי דחוף!)
+  if (status === 'schedule_meeting' && daysSinceStatusChange >= 1) {
+    badges.push({ type: 'urgent' as const, text: 'לקבוע פגישה דחופה', icon: '⏰' })
+    priorityScore += 12 // הכי גבוה!
+    isUrgent = true
+  }
+
+  // ⚠️ אזהרות (צהוב) - רק אם אין דחיפות
+  // סטטוס שהשתנה לפני 2+ ימים ונשאר ללא שינוי
+  if (!isUrgent && daysSinceStatusChange >= 2) {
+    badges.push({ type: 'warning' as const, text: 'ללא התקדמות זמן רב', icon: '⚠️' })
+    priorityScore += 5
+  }
+
+  // 💬 תגובות ממתינות - אחרי 1 יום ללא תגובה
+  if (proposal.boy_response === 'pending' && proposal.girl_response !== 'pending' && daysSinceStatusChange >= 1) {
+    badges.push({ type: 'waiting' as const, text: 'ממתין לתגובת בחור', icon: '💬' })
+    priorityScore += 7
+  }
+
+  if (proposal.girl_response === 'pending' && proposal.boy_response !== 'pending' && daysSinceStatusChange >= 1) {
+    badges.push({ type: 'waiting' as const, text: 'ממתין לתגובת בחורה', icon: '💬' })
+    priorityScore += 7
+  }
+
+  // ✨ הצלחות
+  if (status === 'schedule_meeting' && daysSinceStatusChange === 0) {
+    badges.push({ type: 'success' as const, text: 'מוכן לפגישה!', icon: '✨' })
+    priorityScore += 3
+  }
+
+  if (status === 'completed') {
+    badges.push({ type: 'success' as const, text: 'מזל טוב!', icon: '🎉' })
+    priorityScore += 1
+  }
+
+  // 📈 ציון התאמה גבוה
+  const finalScore = proposal.finalScore || 0
+  if (finalScore >= 8) {
+    badges.push({ type: 'info' as const, text: 'התאמה מצוינת', icon: '⭐' })
+    priorityScore += 2
+  }
+
+  // 🆕 חדש - רק בסטטוס "ממתינה לתחילת טיפול" וחדש
+  if (status === 'ready_for_processing' && daysSinceStatusChange === 0) {
+    badges.push({ type: 'info' as const, text: 'חדש', icon: '🆕' })
+    priorityScore += 1
+  }
+
+  return {
+    badges,
+    priorityScore,
+    isUrgent
+  }
+}
+
+// פונקציה לקבלת צבע רקע לפי דחיפות
+export const getUrgencyBackgroundColor = (proposal: EnhancedProposal): string => {
+  const { isUrgent, priorityScore } = getProposalIndicators(proposal)
+  
+  // דחוף מנצח על הכל (אדום)
+  if (isUrgent) {
+    return 'bg-red-50 border-red-200 hover:bg-red-100'
+  }
+  
+  // אזהרות (צהוב) - רק אם לא דחוף
+  if (priorityScore >= 4) {
+    return 'bg-yellow-50 border-yellow-200 hover:bg-yellow-100'
+  }
+  
+  // הצלחות (ירוק)
+  if (proposal.status === 'completed') {
+    return 'bg-green-50 border-green-200 hover:bg-green-100'
+  }
+  
+  // רגיל (לבן)
+  return 'bg-white border-gray-200 hover:bg-gray-50'
+}
+
+// מיון הצעות לפי דחיפות
+export const sortProposalsByUrgency = (proposals: EnhancedProposal[]): EnhancedProposal[] => {
+  return [...proposals].sort((a, b) => {
+    const aIndicators = getProposalIndicators(a)
+    const bIndicators = getProposalIndicators(b)
+    
+    // דחיפות גבוהה קודם
+    if (aIndicators.isUrgent && !bIndicators.isUrgent) return -1
+    if (!aIndicators.isUrgent && bIndicators.isUrgent) return 1
+    
+    // לפי ציון דחיפות
+    if (aIndicators.priorityScore !== bIndicators.priorityScore) {
+      return bIndicators.priorityScore - aIndicators.priorityScore
+    }
+    
+    // לפי זמן בתהליך (ארוך יותר קודם)
+    const aDays = a.daysInProcess || 0
+    const bDays = b.daysInProcess || 0
+    return bDays - aDays
+  })
+}
+
+// ************ סוף הוספות סמנים חכמים ************
+
 // פונקציה לחילוץ פרטי נימוק מהטקסט
 const extractReasoningDetails = (aiReasoning: string) => {
   // חילוץ ציונים - תמיכה בפורמטים שונים

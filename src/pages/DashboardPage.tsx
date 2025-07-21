@@ -22,9 +22,10 @@ import {
   MatchingSession,
   checkAuthConnection
 } from '@/lib/sessions'
-import { loadEnhancedProposals } from '@/lib/proposals'
+import { loadEnhancedProposals, updateProposalStatus, getProposalIndicators, getUrgencyBackgroundColor, sortProposalsByUrgency } from '@/lib/proposals'
 import { EnhancedProposal, ProposalsFilter } from '@/types'
 import { ProposalCard } from '@/components/ui/ProposalCard'
+import { ProposalBadges, UrgencyIndicator } from '@/components/ui/ProposalBadges'
 
 interface DashboardPageProps {
   user?: {
@@ -52,6 +53,7 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
 
   // State למספר הצעות פעילות
   const [activeProposalsCount, setActiveProposalsCount] = useState(0)
+  const [urgentProposalsCount, setUrgentProposalsCount] = useState(0)
 
   const [candidates] = useState<{ males: DetailedCandidate[], females: DetailedCandidate[] } | null>(null)
 
@@ -194,7 +196,7 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
           onProposalCountChange={setActiveProposalsCount}
         />
       case 'proposals':
-        return <ProposalsTab accessToken={accessToken} onCountChange={setActiveProposalsCount} shadchanId={shadchanId} />
+        return <ProposalsTab accessToken={accessToken} onCountChange={setActiveProposalsCount} onUrgentCountChange={setUrgentProposalsCount} shadchanId={shadchanId} />
       case 'import':
         return <ImportTab accessToken={accessToken} />
       case 'history':
@@ -265,7 +267,7 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
         </div>
 
         {/* סטטיסטיקות מהירות */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div className="grid grid-cols-4 gap-6 mb-8">
           <div className="bg-white rounded-lg p-6 shadow-sm border border-gray-200">
             <div className="flex items-center justify-between">
               <div>
@@ -293,6 +295,32 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
             </div>
           </div>
 
+          <div className={`rounded-lg p-6 shadow-sm border transition-all duration-300 hover:shadow-md ${
+            urgentProposalsCount > 0 
+              ? 'bg-red-50 border-red-200' 
+              : 'bg-white border-gray-200'
+          }`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">הצעות דחופות</p>
+                <p className={`text-2xl font-bold transition-all duration-500 ${
+                  urgentProposalsCount > 0 ? 'text-red-600' : 'text-gray-900'
+                }`}>
+                  {urgentProposalsCount}
+                  {urgentProposalsCount > 0 && (
+                    <span className="text-sm text-red-600 mr-2 animate-pulse">🔥</span>
+                  )}
+                </p>
+                {urgentProposalsCount > 0 && (
+                  <p className="text-xs text-red-600 mt-1">דורש תשומת לב מיידית</p>
+                )}
+              </div>
+              <AlertTriangle className={`w-8 h-8 transition-colors duration-300 ${
+                urgentProposalsCount > 0 ? 'text-red-600 animate-pulse' : 'text-gray-400'
+              }`} />
+            </div>
+          </div>
+
           <div className="bg-white rounded-lg p-6 shadow-sm border border-gray-200">
             <div className="flex items-center justify-between">
               <div>
@@ -300,16 +328,6 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
                 <p className="text-2xl font-bold text-gray-900">2</p>
               </div>
               <Upload className="w-8 h-8 text-purple-600" />
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg p-6 shadow-sm border border-gray-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">שיעור הצלחה</p>
-                <p className="text-2xl font-bold text-gray-900">--%</p>
-              </div>
-              <Heart className="w-8 h-8 text-red-600" />
             </div>
           </div>
         </div>
@@ -962,10 +980,15 @@ const ProposalListRow = ({ proposal, onClick }: { proposal: EnhancedProposal, on
 
   return (
     <div 
-      className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-all cursor-pointer hover:border-blue-300"
+      className={`border rounded-lg p-4 hover:shadow-md transition-all cursor-pointer relative ${getUrgencyBackgroundColor(proposal)}`}
       onClick={onClick}
     >
       <div className="flex items-center justify-between">
+        {/* אינדיקטור דחיפות */}
+        <div className="absolute top-2 right-2">
+          <UrgencyIndicator proposal={proposal} />
+        </div>
+
         {/* פרטי ההצעה */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-4">
@@ -986,6 +1009,11 @@ const ProposalListRow = ({ proposal, onClick }: { proposal: EnhancedProposal, on
               </span>
             </div>
             
+            {/* סמנים ויזואליים */}
+            <div className="ml-4">
+              <ProposalBadges proposal={proposal} size="sm" maxBadges={3} />
+            </div>
+
             {/* ערים */}
             {(proposal.boyDetails?.city || proposal.boy_data?.city || proposal.girlDetails?.city || proposal.girl_data?.city) && (
               <div className="text-sm text-gray-600">
@@ -1069,12 +1097,17 @@ const ProposalGridCard = ({ proposal, onClick }: { proposal: EnhancedProposal, o
 
   return (
     <div 
-      className="bg-white border border-gray-200 rounded-lg p-5 hover:shadow-lg transition-all cursor-pointer hover:border-blue-300 min-h-[200px]"
+      className={`border rounded-lg p-5 hover:shadow-lg transition-all cursor-pointer min-h-[200px] relative ${getUrgencyBackgroundColor(proposal)}`}
       onClick={onClick}
     >
+      {/* סמן דחיפות עליון */}
+      <div className="absolute top-3 left-3">
+        <UrgencyIndicator proposal={proposal} />
+      </div>
+
       {/* כותרת עם ציון */}
       <div className="flex justify-between items-start mb-4">
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 mr-8">
           <h3 className="font-semibold text-gray-900 text-base mb-1">
             💙 {proposal.boyDetails?.name || proposal.boy_data?.name || 'ללא שם'}
             {(proposal.boyDetails?.age || proposal.boy_data?.age) && (
@@ -1103,6 +1136,11 @@ const ProposalGridCard = ({ proposal, onClick }: { proposal: EnhancedProposal, o
             </span>
           </div>
         </div>
+      </div>
+
+      {/* סמנים ויזואליים */}
+      <div className="mb-3">
+        <ProposalBadges proposal={proposal} size="sm" maxBadges={2} />
       </div>
 
       {/* פרטים נוספים */}
@@ -1145,7 +1183,7 @@ const ProposalGridCard = ({ proposal, onClick }: { proposal: EnhancedProposal, o
 }
 
 // רכיב טאב הצעות
-const ProposalsTab = ({ accessToken, onCountChange, shadchanId }: { accessToken: string | null, onCountChange: (count: number) => void, shadchanId: string | null }) => {
+const ProposalsTab = ({ accessToken, onCountChange, onUrgentCountChange, shadchanId }: { accessToken: string | null, onCountChange: (count: number) => void, onUrgentCountChange: (count: number) => void, shadchanId: string | null }) => {
   const [proposals, setProposals] = useState<EnhancedProposal[]>([])
   const [filteredProposals, setFilteredProposals] = useState<EnhancedProposal[]>([]) // הצעות מסוננות לתצוגה
   const [loading, setLoading] = useState(true)
@@ -1290,11 +1328,21 @@ const ProposalsTab = ({ accessToken, onCountChange, shadchanId }: { accessToken:
       // סינון לפי הטאב הפעיל
       const tabFilteredProposals = filterByActiveTab(filtered)
       
+      // מיון חכם לפי דחיפות (הצעות דחופות יעלו למעלה)
+      const urgencySortedProposals = sortProposalsByUrgency(tabFilteredProposals)
+      
       // יישום חיפוש טקסט על ההצעות המסוננות לפי טאב
-      applyTextSearch(tabFilteredProposals, filter.searchTerm || '')
+      applyTextSearch(urgencySortedProposals, filter.searchTerm || '')
       
       // עדכון מספר ההצעות הכולל (כל הטאבים)
       onCountChange(filtered.length)
+      
+      // חישוב מספר הצעות דחופות (לפי הלוגיקה החדשה)
+      const urgentCount = filtered.filter(proposal => {
+        const { isUrgent } = getProposalIndicators(proposal)
+        return isUrgent
+      }).length
+      onUrgentCountChange(urgentCount)
       setIsFirstLoad(false) // מעכשיו זו לא הטעינה הראשונה
       console.log('✅ מוצגות', filtered.length, 'הצעות פעילות מתוך', enhancedProposals.length, 'כולל')
     } catch (error) {
@@ -1553,6 +1601,47 @@ const ProposalsTab = ({ accessToken, onCountChange, shadchanId }: { accessToken:
             )}
           </div>
         </div>
+        
+        {/* כפתור עזרה עם טולטיפ */}
+        {filteredProposals.length > 0 && (
+          <div className="flex justify-center">
+            <div className="relative group">
+              <button className="text-gray-500 hover:text-blue-600 text-sm flex items-center gap-1">
+                <span>🚦</span>
+                <span>מדריך סמנים</span>
+                <span className="text-xs">❓</span>
+              </button>
+              
+              {/* טולטיפ */}
+              <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-50">
+                <div className="bg-gray-900 text-white text-xs rounded-lg p-3 shadow-lg min-w-[400px]">
+                  <div className="text-center font-semibold mb-2">🚦 מדריך סמנים חכמים</div>
+                  <div className="space-y-1 text-right">
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1 bg-red-600 text-white px-2 py-1 rounded text-xs">🔥 דחוף</span>
+                      <span>ממתין לתגובה 3+ ימים או לקבוע פגישה 1+ יום</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1 bg-yellow-600 text-white px-2 py-1 rounded text-xs">⚠️ אזהרה</span>
+                      <span>ללא התקדמות 2+ ימים</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1 bg-orange-600 text-white px-2 py-1 rounded text-xs">💬 ממתין</span>
+                      <span>ללא תגובה 1+ יום</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1 bg-blue-600 text-white px-2 py-1 rounded text-xs">🆕 חדש</span>
+                      <span>הצעה חדשה ממתינה לטיפול</span>
+                    </div>
+                  </div>
+                  
+                  {/* חץ למטה */}
+                  <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
       
       {filteredProposals.length === 0 && filter.searchTerm ? (
