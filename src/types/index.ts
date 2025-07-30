@@ -16,6 +16,9 @@ export interface Shadchan {
   matching_prompt: string;
   created_at: string;
   updated_at: string;
+  
+  // הגדרות התאמה מתקדמות - חדש!
+  advanced_matching_settings?: AdvancedMatchingSettings;
 }
 
 // מועמד (נתונים מגיליון Google Sheets)
@@ -181,6 +184,8 @@ export interface DetailedCandidate {
   location?: string;
   education?: string;
   profession?: string;
+  familyBackground?: string;
+  rqcMishpahti?: string;
   
   // העדפות
   preferredAgeRange?: string;
@@ -197,7 +202,6 @@ export interface DetailedCandidate {
   // נתונים נוספים
   height?: string;
   appearance?: string;
-  familyBackground?: string;
   economicStatus?: string;
   healthStatus?: string;
   
@@ -226,10 +230,9 @@ export interface MatchingStats {
   processingTime: number; // זמן עיבוד בשניות
 }
 
-// הגדרות תהליך ההתאמה
+// הגדרות תהליך ההתאמה - בסיסי (תמיכה לאחור)
 export interface MatchingSettings {
-  logicalThreshold: number; // סף הניקוד הלוגי (ברירת מחדל: 4)
-  maxMatches: number;       // מקסימום התאמות (ברירת מחדל: 25)
+  maxMatches: number;       // מקסימום התאמות (ברירת מחדל: 10)
   hardFilters: {
     maxAgeDifference: number; // פער גיל מקסימלי (ברירת מחדל: 5)
     respectReligiousLevel: boolean;
@@ -242,6 +245,111 @@ export interface MatchingSettings {
     maxTokens: number;
   };
 }
+
+// פרופיל חיפוש שמור
+export interface SearchProfile {
+  id: string;
+  name: string;
+  description: string;
+  settings: Partial<AdvancedMatchingSettings>;
+  created_at: string;
+  is_default: boolean;
+}
+
+// הגדרות התאמה מתקדמות - חדש!
+export interface AdvancedMatchingSettings extends MatchingSettings {
+  // משקולות חשיבות (0-10) - מתווספות לניקוד הלוגי
+  weights: {
+    age: number;           // חשיבות פער גילאים
+    location: number;      // חשיבות קרבה גיאוגרפית
+    religiousLevel: number;// חשיבות התאמה דתית
+    education: number;     // חשיבות רמת השכלה
+    profession: number;    // חשיבות סוג מקצוע
+    familyBackground: number; // חשיבות רקע משפחתי
+  };
+  
+  // הגדרות מתקדמות לפילטרים קשיחים
+  advancedFilters: {
+    maxDistanceKm: number;        // מרחק מקסימלי בק"מ
+    allowedReligiousMatches: string[]; // רשימת תואמות דתיות מותרות
+    customDealBreakers: string[]; // דיל ברייקרס מותאמים
+    requireSameCity: boolean;     // חובת אותה עיר
+    allowDivorced: boolean;       // האם לאפשר גרושים
+  };
+  
+  // הגדרות GPT מותאמות
+  customGptSettings: {
+    customPrompt?: string;        // פרומפט מותאם אישית
+    focusAreas: string[];         // תחומי דגש ספציפיים
+    analysisDepth: 'basic' | 'detailed' | 'comprehensive'; // רמת עומק הניתוח
+    includeCompatibilityScore: boolean; // האם לכלול ציון תואמות
+  };
+  
+  // פרופילי חיפוש
+  searchProfiles: SearchProfile[];
+  
+  // הגדרות כלליות
+  preferences: {
+    saveSearchHistory: boolean;   // שמירת היסטוריית חיפושים
+    autoRejectPreviousMatches: boolean; // דחייה אוטומטית של זוגות קודמים
+    notificationSettings: {
+      urgentMatches: boolean;     // התראות על התאמות דחופות
+      weeklyReports: boolean;     // דוחות שבועיים
+    };
+  };
+}
+
+// פונקציות עזר להגדרות ברירת מחדל
+export const getDefaultAdvancedMatchingSettings = (): AdvancedMatchingSettings => ({
+  // הגדרות בסיסיות (תמיכה לאחור)
+  maxMatches: 10,
+  hardFilters: {
+    maxAgeDifference: 5,
+    respectReligiousLevel: true,
+    respectCommunityPreference: true,
+    respectDealBreakers: true,
+  },
+  gptSettings: {
+    model: 'gpt-4o-mini',
+    temperature: 0.7,
+    maxTokens: 1000,
+  },
+  
+  // הגדרות מתקדמות
+  weights: {
+    age: 8,              // פער גילאים חשוב מאוד
+    location: 6,         // מיקום בינוני-גבוה
+    religiousLevel: 9,   // רמה דתית קריטית
+    education: 5,        // השכלה בינונית
+    profession: 4,       // מקצוע פחות חשוב
+    familyBackground: 7, // רקע משפחתי חשוב
+  },
+  
+  advancedFilters: {
+    maxDistanceKm: 50,
+    allowedReligiousMatches: ['דתי↔דתי', 'חרדי↔חרדי', 'מסורתי↔מסורתי', 'דתי↔מסורתי'],
+    customDealBreakers: [],
+    requireSameCity: false,
+    allowDivorced: true,
+  },
+  
+  customGptSettings: {
+    focusAreas: ['תואמות רוחנית', 'יציבות משפחתית', 'חזון משותף'],
+    analysisDepth: 'detailed',
+    includeCompatibilityScore: true,
+  },
+  
+  searchProfiles: [],
+  
+  preferences: {
+    saveSearchHistory: true,
+    autoRejectPreviousMatches: true,
+    notificationSettings: {
+      urgentMatches: true,
+      weeklyReports: false,
+    },
+  },
+})
 
 // ============ טיפוסים חדשים לניהול הצעות מתקדם ============
 

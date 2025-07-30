@@ -162,6 +162,8 @@ export interface DetailedCandidate {
   internetUsage?: string
   educationViews?: string
   aboutMe?: string
+  familyBackground?: string
+  rqcMishpahti?: string
   lookingFor?: string
   importantQualities?: string
   dealBreakers?: string
@@ -287,7 +289,7 @@ const createColumnMapping = (): ColumnMapping => {
   return mapping
 }
 
-const parseCandidateFixed = (row: string[], _gender: 'male' | 'female', rowIndex: number, _headers: string[] = []): DetailedCandidate | null => {
+const parseCandidateFixed = (row: string[], _gender: 'male' | 'female', _rowIndex: number, _headers: string[] = []): DetailedCandidate | null => {
   if (!row || row.length < 5) return null
   
   // יצירת מיפוי קבוע
@@ -473,56 +475,71 @@ export const loadCandidatesFromSheet = async (
 }
 
 // שלב 1: סינון קשיח (Hard Filters) - ללא GPT
-export const applyHardFilters = (male: DetailedCandidate, female: DetailedCandidate): boolean => {
+export const applyHardFilters = (
+  male: DetailedCandidate, 
+  female: DetailedCandidate,
+  hardFilters?: { maxAgeDifference: number, respectReligiousLevel: boolean, respectCommunityPreference: boolean, respectDealBreakers: boolean }
+): boolean => {
   console.log(`🔍 בודק סינון קשיח: ${male.name} - ${female.name}`)
   
-  // 1. פער גיל מקסימלי: 5 שנים
+  // ברירת מחדל אם לא מועברות הגדרות
+  const maxAgeDiff = hardFilters?.maxAgeDifference || 5
+  const respectCommunityPreference = hardFilters?.respectCommunityPreference ?? true
+  const respectReligiousLevel = hardFilters?.respectReligiousLevel ?? true
+  const respectDealBreakers = hardFilters?.respectDealBreakers ?? true
+  
+  // 1. פער גיל מקסימלי (מותאם לפי הגדרות)
   const ageDiff = Math.abs(male.age - female.age)
-  if (ageDiff > 5) {
-    console.log(`❌ פער גיל גדול מדי: ${ageDiff} שנים`)
+  if (ageDiff > maxAgeDiff) {
+    console.log(`❌ פער גיל גדול מדי: ${ageDiff} שנים (מקסימום: ${maxAgeDiff})`)
     return false
   }
 
-  // 2. שניהם רווקים (או לפחות אחד לא מתנגד לסטטוס השני)
+  // משתנים לשימוש בבדיקות שונות
   const maleMaritalStatus = male.maritalStatus?.toLowerCase() || ''
   const femaleMaritalStatus = female.maritalStatus?.toLowerCase() || ''
-  
-  // אם המועמדת מחפשת רק רווק והבחור גרוש
-  if (female.lookingFor?.includes('רווק') && maleMaritalStatus.includes('גרוש')) {
-    console.log(`❌ המועמדת מחפשת רווק והבחור גרוש`)
-    return false
-  }
-  
-  // אם הבחור מחפש רק רווקה והמועמדת גרושה
-  if (male.lookingFor?.includes('רווק') && femaleMaritalStatus.includes('גרוש')) {
-    console.log(`❌ הבחור מחפש רווקה והמועמדת גרושה`)
-    return false
-  }
-
-  // 3. התאמה מגזרית/עדתית
   const maleCommunity = male.community?.toLowerCase() || ''
   const femaleCommunity = female.community?.toLowerCase() || ''
-  
-  // אם המועמדת מחפשת ספציפית אשכנזי והבחור ספרדי
-  if (female.lookingFor?.includes('אשכנזי') && maleCommunity.includes('ספרדי')) {
-    console.log(`❌ המועמדת מחפשת אשכנזי והבחור ספרדי`)
-    return false
-  }
-  
-  // אם המועמדת מחפשת ספציפית ספרדי והבחור אשכנזי
-  if (female.lookingFor?.includes('ספרדי') && maleCommunity.includes('אשכנזי')) {
-    console.log(`❌ המועמדת מחפשת ספרדי והבחור אשכנזי`)
-    return false
-  }
-  
-  // אם הבחור מחפש ספציפית אשכנזית והמועמדת ספרדית
-  if (male.lookingFor?.includes('אשכנזי') && femaleCommunity.includes('ספרדי')) {
-    console.log(`❌ הבחור מחפש אשכנזית והמועמדת ספרדית`)
-    return false
+
+  // 2. סטטוס משפחתי (מותאם לפי הגדרות)
+  if (respectReligiousLevel) {
+    // אם המועמדת מחפשת רק רווק והבחור גרוש
+    if (female.lookingFor?.includes('רווק') && maleMaritalStatus.includes('גרוש')) {
+      console.log(`❌ המועמדת מחפשת רווק והבחור גרוש`)
+      return false
+    }
+    
+    // אם הבחור מחפש רק רווקה והמועמדת גרושה
+    if (male.lookingFor?.includes('רווק') && femaleMaritalStatus.includes('גרוש')) {
+      console.log(`❌ הבחור מחפש רווקה והמועמדת גרושה`)
+      return false
+    }
   }
 
-  // 4. בדיקת דיל ברייקרס
-  if (male.dealBreakers) {
+  // 3. התאמה מגזרית/עדתית (מותאם לפי הגדרות)
+  if (respectCommunityPreference) {
+    
+    // אם המועמדת מחפשת ספציפית אשכנזי והבחור ספרדי
+    if (female.lookingFor?.includes('אשכנזי') && maleCommunity.includes('ספרדי')) {
+      console.log(`❌ המועמדת מחפשת אשכנזי והבחור ספרדי`)
+      return false
+    }
+    
+    // אם המועמדת מחפשת ספציפית ספרדי והבחור אשכנזי
+    if (female.lookingFor?.includes('ספרדי') && maleCommunity.includes('אשכנזי')) {
+      console.log(`❌ המועמדת מחפשת ספרדי והבחור אשכנזי`)
+      return false
+    }
+    
+    // אם הבחור מחפש ספציפית אשכנזית והמועמדת ספרדית
+    if (male.lookingFor?.includes('אשכנזי') && femaleCommunity.includes('ספרדי')) {
+      console.log(`❌ הבחור מחפש אשכנזית והמועמדת ספרדית`)
+      return false
+    }
+  }
+
+  // 4. בדיקת דיל ברייקרס (מותאם לפי הגדרות)
+  if (respectDealBreakers && male.dealBreakers) {
     const dealBreakers = male.dealBreakers.toLowerCase()
     if (dealBreakers.includes('ספרדי') && femaleCommunity.includes('ספרדי')) {
       console.log(`❌ הבחור לא רוצה ספרדית והמועמדת ספרדית`)
@@ -534,7 +551,7 @@ export const applyHardFilters = (male: DetailedCandidate, female: DetailedCandid
     }
   }
 
-  if (female.dealBreakers) {
+  if (respectDealBreakers && female.dealBreakers) {
     const dealBreakers = female.dealBreakers.toLowerCase()
     if (dealBreakers.includes('ספרדי') && maleCommunity.includes('ספרדי')) {
       console.log(`❌ המועמדת לא רוצה ספרדי והבחור ספרדי`)
@@ -550,60 +567,86 @@ export const applyHardFilters = (male: DetailedCandidate, female: DetailedCandid
   return true
 }
 
-// שלב 2: ניקוד לוגי (Logical Scoring) - ציון 0-10 (כמו בקוד החכם שלך)
-export const calculateLogicalScore = (male: DetailedCandidate, female: DetailedCandidate): number => {
+// שלב 2: ניקוד לוגי (Logical Scoring) - ציון 0-10 עם משקולות מותאמות
+export const calculateLogicalScore = (
+  male: DetailedCandidate, 
+  female: DetailedCandidate,
+  weights?: { age: number, location: number, religiousLevel: number, education: number, profession: number, familyBackground: number }
+): number => {
+  // ברירת מחדל של משקולות אם לא מועברות
+  const defaultWeights = { age: 8, location: 6, religiousLevel: 9, education: 5, profession: 4, familyBackground: 7 }
+  const w = weights || defaultWeights
   let score = 0
   
-  // 1. ניקוד גיל (עד 2 נקודות) - כמו בקוד שלך
+  // 1. ניקוד גיל (עם משקל מותאם)
   const ageDiff = Math.abs(male.age - female.age)
+  let ageScore = 0
   if (ageDiff <= 2) {
-    score += 2
+    ageScore = 2
   } else if (ageDiff <= 5) {
-    score += 1
+    ageScore = 1
   }
+  score += (ageScore * w.age) / 5 // נורמליזציה ל-10 נקודות
   
-  // 2. ניקוד רמה דתית (עד 2 נקודות) - כמו בקוד שלך
+  // 2. ניקוד רמה דתית (עם משקל מותאם)
   const maleReligious = (male.religiousLevel || '').toLowerCase().trim()
   const femaleReligious = (female.religiousLevel || '').toLowerCase().trim()
+  let religiousScore = 0
   if (maleReligious === femaleReligious) {
-    score += 2
+    religiousScore = 2
   } else if (areReligiousLevelsCompatible(maleReligious, femaleReligious)) {
-    score += 1
+    religiousScore = 1
   }
+  score += (religiousScore * w.religiousLevel) / 5
   
-  // 3. ניקוד תחביבים (עד 2 נקודות) - כמו בקוד שלך
-  const maleHobbies = male.hobbies || ''
-  const femaleHobbies = female.hobbies || ''
-  const sharedHobbies = countSharedWords(maleHobbies, femaleHobbies)
-  if (sharedHobbies >= 2) {
-    score += 2
-  } else if (sharedHobbies >= 1) {
-    score += 1
-  }
-  
-  // 4. ניקוד ערכים ואמונות (עד 2 נקודות) - כמו בקוד שלך
-  const maleValues = male.valuesAndBeliefs || ''
-  const femaleValues = female.valuesAndBeliefs || ''
-  const sharedValues = countSharedWords(maleValues, femaleValues)
-  if (sharedValues >= 2) {
-    score += 2
-  } else if (sharedValues >= 1) {
-    score += 1
-  }
-  
-  // 5. ניקוד מקום מגורים (עד 2 נקודות) - כמו בקוד שלך
+  // 3. ניקוד מקום מגורים (עם משקל מותאם)
   const maleLocation = male.location || ''
   const femaleLocation = female.location || ''
+  let locationScore = 0
   if (maleLocation.toLowerCase().trim() === femaleLocation.toLowerCase().trim()) {
-    score += 2
+    locationScore = 2
   } else if (areLocationsNear(maleLocation, femaleLocation)) {
-    score += 1
+    locationScore = 1
   }
+  score += (locationScore * w.location) / 5
+  
+  // 4. ניקוד השכלה (עם משקל מותאם)
+  const maleEducation = (male.education || '').toLowerCase().trim()
+  const femaleEducation = (female.education || '').toLowerCase().trim()
+  let educationScore = 0
+  if (maleEducation === femaleEducation) {
+    educationScore = 2
+  } else if (areEducationLevelsCompatible(maleEducation, femaleEducation)) {
+    educationScore = 1
+  }
+  score += (educationScore * w.education) / 5
+  
+  // 5. ניקוד מקצוע (עם משקל מותאם)
+  const maleProfession = (male.profession || '').toLowerCase().trim()
+  const femaleProfession = (female.profession || '').toLowerCase().trim()
+  let professionScore = 0
+  if (maleProfession === femaleProfession) {
+    professionScore = 2
+  } else if (areProfessionsCompatible(maleProfession, femaleProfession)) {
+    professionScore = 1
+  }
+  score += (professionScore * w.profession) / 5
+  
+  // 6. ניקוד רקע משפחתי (עם משקל מותאם)
+  const maleFamilyBackground = (male.familyBackground || '').toLowerCase().trim()
+  const femaleFamilyBackground = (female.familyBackground || '').toLowerCase().trim()
+  let familyScore = 0
+  if (maleFamilyBackground === femaleFamilyBackground) {
+    familyScore = 2
+  } else if (countSharedWords(maleFamilyBackground, femaleFamilyBackground) >= 1) {
+    familyScore = 1
+  }
+  score += (familyScore * w.familyBackground) / 5
   
   return Math.min(score, 10) // מגביל ל-10 מקסימום
 }
 
-// פונקציות עזר - כמו בקוד החכם שלך
+// פונקציות עזר מתקדמות
 
 // פונקציית עזר - סופרת מילים משותפות בין שני מחרוזות
 const countSharedWords = (stringA: string, stringB: string): number => {
@@ -665,6 +708,48 @@ export const passesLogicalThreshold = (score: number, threshold: number = 4): bo
   const passed = score >= threshold
   // console.log(`${passed ? '✅' : '❌'} ציון ${score.toFixed(1)} vs סף ${threshold} -> ${passed ? 'עובר' : 'נכשל'}`)
   return passed
+}
+
+// פונקציות עזר נוספות להתאמה מתקדמת
+
+// בדיקת תואמות רמות השכלה
+const areEducationLevelsCompatible = (education1: string, education2: string): boolean => {
+  const compatibleGroups = [
+    ['תיכון', 'תעודת בגרות', 'סיום תיכון'],
+    ['תעודה', 'קורס מקצועי', 'הכשרה מקצועית'],
+    ['תואר ראשון', 'בוגר אוניברסיטה', 'תואר'],
+    ['תואר שני', 'מוסמך', 'מגיסטר'],
+    ['תואר שלישי', 'דוקטור', 'פרופסור']
+  ]
+  
+  for (const group of compatibleGroups) {
+    if (group.some(level => education1.includes(level)) && 
+        group.some(level => education2.includes(level))) {
+      return true
+    }
+  }
+  return false
+}
+
+// בדיקת תואמות מקצועות
+const areProfessionsCompatible = (profession1: string, profession2: string): boolean => {
+  const compatibleGroups = [
+    ['רופא', 'רפואה', 'רפואי'],
+    ['עורך דין', 'משפטי', 'משפטים'],
+    ['מהנדס', 'הנדסה', 'טכנולוגיה'],
+    ['מורה', 'חינוך', 'הוראה'],
+    ['רו"ח', 'כלכלה', 'חשבונאות'],
+    ['מעצב', 'אמנות', 'יצירה'],
+    ['מחשבים', 'תוכנה', 'היי-טק']
+  ]
+  
+  for (const group of compatibleGroups) {
+    if (group.some(prof => profession1.includes(prof)) && 
+        group.some(prof => profession2.includes(prof))) {
+      return true
+    }
+  }
+  return false
 }
 
 // הסרת checkBasicCompatibility הישנה - נחליף אותה בפונקציות החדשות

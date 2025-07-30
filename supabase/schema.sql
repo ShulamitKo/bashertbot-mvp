@@ -18,6 +18,9 @@ CREATE TABLE shadchanim (
     max_age_gap INTEGER DEFAULT 10,
     matching_prompt TEXT DEFAULT 'בדוק התאמה בין הזוגות לפי עדות, רקע משפחתי, השכלה ועבודה, נתני דירה ואזור מגורים רצוי',
     
+    -- הגדרות התאמה מתקדמות - חדש!
+    advanced_matching_settings JSONB,
+    
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

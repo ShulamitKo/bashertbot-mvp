@@ -6,8 +6,6 @@ import { getCurrentUser, getOrCreateShadchanProfile, onAuthStateChange } from '.
 import { Shadchan } from './types'
 import './App.css'
 import { supabase } from './lib/supabase'
-import { StagewiseToolbar } from '@stagewise/toolbar-react'
-import ReactPlugin from '@stagewise-plugins/react'
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -121,7 +119,6 @@ function App() {
           email: user?.email || ''
         }}
       />
-      <StagewiseToolbar config={{ plugins: [ReactPlugin] }} />
     </div>
   )
 }

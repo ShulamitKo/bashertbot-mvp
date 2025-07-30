@@ -1,5 +1,5 @@
 import OpenAI from 'openai'
-import { MatchProposal } from '../types'
+import { MatchProposal, AdvancedMatchingSettings } from '../types'
 import { 
   DetailedCandidate,
   applyHardFilters, 
@@ -70,24 +70,34 @@ const createMatchPrompt = (male: DetailedCandidate, female: DetailedCandidate): 
 }
 
 // פונקציה לפנייה ל-GPT לזוג בודד
-const analyzeMatchWithGPT = async (male: DetailedCandidate, female: DetailedCandidate): Promise<GPTMatchResponse> => {
+const analyzeMatchWithGPT = async (
+  male: DetailedCandidate, 
+  female: DetailedCandidate,
+  gptSettings?: { model: string, temperature: number, maxTokens: number },
+  customPrompt?: string
+): Promise<GPTMatchResponse> => {
   console.log(`🤖 שולח ל-GPT לניתוח: ${male.name} - ${female.name}`)
+  
+  // ברירת מחדל להגדרות GPT
+  const model = gptSettings?.model || 'gpt-4o-mini'
+  const temperature = gptSettings?.temperature || 0.4
+  const maxTokens = gptSettings?.maxTokens || 1000
   
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini', // מהיר וזול יותר מ-gpt-4
+      model,
       messages: [
         {
           role: 'system',
-          content: 'אתה שדכן מקצועי ומנוסה המתמחה בהתאמות זוגיות במגזר הדתי. אתה מנתח בזהירות את התאימות בין מועמדים ונותן ציון מדויק.'
+          content: customPrompt || 'אתה שדכן מקצועי ומנוסה המתמחה בהתאמות זוגיות במגזר הדתי. אתה מנתח בזהירות את התאימות בין מועמדים ונותן ציון מדויק.'
         },
         {
           role: 'user',
           content: createMatchPrompt(male, female)
         }
       ],
-      temperature: 0.4,
-      max_tokens: 1000,
+      temperature,
+      max_tokens: maxTokens,
       response_format: { type: "json_object" }
     })
 
@@ -147,7 +157,13 @@ const getExistingProposals = async (): Promise<Set<string>> => {
 }
 
 // יצירת זוגות פוטנציאליים עם ניקוד לוגי וסינון הצעות קיימות
-const createPotentialPairs = async (males: DetailedCandidate[], females: DetailedCandidate[], logicalThreshold: number = 4) => {
+const createPotentialPairs = async (
+  males: DetailedCandidate[], 
+  females: DetailedCandidate[], 
+  logicalThreshold: number = 4,
+  weights?: { age: number, location: number, religiousLevel: number, education: number, profession: number, familyBackground: number },
+  hardFilters?: { maxAgeDifference: number, respectReligiousLevel: boolean, respectCommunityPreference: boolean, respectDealBreakers: boolean }
+) => {
   const pairs = []
   let totalPairs = 0
   let hardFilterPassed = 0
@@ -168,12 +184,12 @@ const createPotentialPairs = async (males: DetailedCandidate[], females: Detaile
         continue // דלג על ההצעה הקיימת
       }
       
-      // שלב 1: סינון קשיח
-      if (applyHardFilters(male, female)) {
+      // שלב 1: סינון קשיח (עם הגדרות מותאמות)
+      if (applyHardFilters(male, female, hardFilters)) {
         hardFilterPassed++
         
-        // שלב 2: ניקוד לוגי
-        const logicalScore = calculateLogicalScore(male, female)
+        // שלב 2: ניקוד לוגי (עם משקולות מותאמות)
+        const logicalScore = calculateLogicalScore(male, female, weights)
         
         // רק זוגות עם ציון גבוה ישלחו ל-GPT
         if (logicalScore >= logicalThreshold) {
@@ -200,7 +216,12 @@ const createPotentialPairs = async (males: DetailedCandidate[], females: Detaile
 }
 
 // עיבוד זוגות במקביל (מהיר יותר!)
-const processPairsInBatches = async (pairs: any[], batchSize: number = 3): Promise<MatchProposal[]> => {
+const processPairsInBatches = async (
+  pairs: any[], 
+  batchSize: number = 3,
+  gptSettings?: { model: string, temperature: number, maxTokens: number },
+  customPrompt?: string
+): Promise<MatchProposal[]> => {
   const matches: MatchProposal[] = []
   
   for (let i = 0; i < pairs.length; i += batchSize) {
@@ -209,7 +230,7 @@ const processPairsInBatches = async (pairs: any[], batchSize: number = 3): Promi
     // עיבוד הקבוצה במקביל
     const batchPromises = batch.map(async (pair) => {
       try {
-        const gptResponse = await analyzeMatchWithGPT(pair.male, pair.female)
+        const gptResponse = await analyzeMatchWithGPT(pair.male, pair.female, gptSettings, customPrompt)
         
         return {
           id: `${pair.male.name}-${pair.female.name}-${Date.now()}`,
@@ -258,27 +279,43 @@ const processPairsInBatches = async (pairs: any[], batchSize: number = 3): Promi
 export const generateMatches = async (
   males: DetailedCandidate[], 
   females: DetailedCandidate[],
-  logicalThreshold: number = 5,
-  maxMatches: number = 10
+  settings?: AdvancedMatchingSettings
 ): Promise<MatchProposal[]> => {
-  console.log(`🚀 מתחיל תהליך התאמה חכם`)
+  // הגדרות קבועות ומותאמות אישית
+  const LOGICAL_THRESHOLD = 5  // סף לוגי קבוע איכותי (5/10)
+  const MAX_GPT_CANDIDATES = 20  // מקסימום זוגות לשליחה ל-GPT
+  const maxMatches = settings?.maxMatches || 10
+  const weights = settings?.weights
+  const hardFilters = settings?.hardFilters
+  const gptSettings = settings?.gptSettings
+  const customPrompt = settings?.customGptSettings?.customPrompt
+  console.log(`🚀 מתחיל תהליך התאמה חכם משופר`)
   console.log(`📊 כמות בחורים: ${males.length}, בחורות: ${females.length}`)
-  console.log(`⚙️ סף לוגי: ${logicalThreshold}/10, יוחזרו ${maxMatches} הטובות ביותר`)
+  console.log(`⚙️ סף לוגי קבוע: ${LOGICAL_THRESHOLD}/10, מקסימום ל-GPT: ${MAX_GPT_CANDIDATES}, יוחזרו: ${maxMatches}`)
 
   // שלב 1+2: יצירת זוגות פוטנציאליים עם סינון וניקוד (עכשיו כולל בדיקת קיימות)
-  const potentialPairs = await createPotentialPairs(males, females, logicalThreshold)
+  const potentialPairs = await createPotentialPairs(males, females, LOGICAL_THRESHOLD, weights, hardFilters)
   
   if (potentialPairs.length === 0) {
     console.log('❌ לא נמצאו זוגות חדשים העוברים את הסינון')
     return []
   }
 
-  // **שינוי חשוב: כל מי שעבר את הסינונים ישלח ל-GPT**
-  console.log(`🎯 שולח את כל ${potentialPairs.length} הזוגות ל-GPT לניתוח מעמיק`)
+  // **חידוש: מיון לפי ציון לוגי והגבלת כמות לפני GPT**
+  console.log(`📊 נמצאו ${potentialPairs.length} זוגות פוטנציאליים`)
+  
+  // מיון לפי ציון לוגי (מהגבוה לנמוך)
+  potentialPairs.sort((a, b) => b.logicalScore - a.logicalScore)
+  
+  // הגבלה למספר המקסימלי
+  const selectedPairs = potentialPairs.slice(0, MAX_GPT_CANDIDATES)
+  
+  console.log(`🎯 נבחרו ${selectedPairs.length} הזוגות הטובים ביותר לניתוח GPT מתוך ${potentialPairs.length}`)
   console.log(`📈 לאחר ניתוח GPT יוחזרו ${maxMatches} הטובות ביותר`)
+  console.log(`💰 חיסכון בעלות: ${((potentialPairs.length - selectedPairs.length) / potentialPairs.length * 100).toFixed(1)}%`)
 
-  // שלב 3: עיבוד כל הזוגות עם GPT (ללא הגבלה מוקדמת)
-  const allMatches = await processPairsInBatches(potentialPairs, 3) // 3 בקשות במקביל
+  // שלב 3: עיבוד הזוגות הנבחרים עם GPT
+  const allMatches = await processPairsInBatches(selectedPairs, 3, gptSettings, customPrompt) // 3 בקשות במקביל
 
   // שלב 4: מיון לפי ציון סופי והחזרת הטובות ביותר
   allMatches.sort((a, b) => b.finalScore - a.finalScore)
@@ -287,12 +324,14 @@ export const generateMatches = async (
   const topMatches = allMatches.slice(0, maxMatches)
 
   // סיכום סופי מפורט
-  console.log(`\n📈 סיכום תהליך ההתאמה החכם:`)
-  console.log(`   🤖 נותחו ב-GPT: ${allMatches.length} זוגות`)
-  console.log(`   🎯 הוחזרו הטובות ביותר: ${topMatches.length}`)
+  console.log(`\n📈 סיכום תהליך ההתאמה החכם המשופר:`)
+  console.log(`   📊 זוגות פוטנציאליים שעברו סינון: ${potentialPairs.length}`)
+  console.log(`   🎯 נבחרו לניתוח GPT: ${selectedPairs.length}`)
+  console.log(`   🤖 נותחו בפועל ב-GPT: ${allMatches.length} זוגות`)
+  console.log(`   ✨ הוחזרו הטובות ביותר: ${topMatches.length}`)
   console.log(`   📊 טווח ציונים: ${topMatches[topMatches.length-1]?.finalScore.toFixed(1)} - ${topMatches[0]?.finalScore.toFixed(1)}`)
-  console.log(`   💸 עלות משוערת: $${(allMatches.length * 0.0001).toFixed(4)}`)
-  console.log(`   ⚡ זמן חסוך: ~${Math.round((males.length * females.length - allMatches.length) * 2)} שניות`)
+  console.log(`   💰 עלות משוערת: $${(allMatches.length * 0.0001).toFixed(4)} (במקום $${(potentialPairs.length * 0.0001).toFixed(4)})`)
+  console.log(`   ⚡ זמן חסוך: ~${Math.round((potentialPairs.length - selectedPairs.length) * 2)} שניות`)
 
   return topMatches
 }

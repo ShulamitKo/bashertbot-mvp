@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Heart, Users, Upload, Settings, TrendingUp, AlertTriangle, ArrowLeft, History, Trash2 } from 'lucide-react'
+import { Heart, Users, Upload, Settings, TrendingUp, AlertTriangle, ArrowLeft, History, Trash2, Sliders } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { debugAuthStatus, refreshAuthToken } from '@/lib/auth'
 import { loadCandidatesFromSheet, DetailedCandidate } from '@/lib/google-sheets'
 import { generateMatches } from '@/lib/openai'
-import { MatchProposal } from '@/types'
+import { MatchProposal, AdvancedMatchingSettings } from '@/types'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { NewScanWarningModal } from '@/components/ui/NewScanWarningModal'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { AdvancedSettingsPanel } from '@/components/ui/AdvancedSettingsPanel'
 import { 
   getActiveSession, 
   createNewSession, 
@@ -22,7 +23,8 @@ import {
   MatchingSession,
   checkAuthConnection
 } from '@/lib/sessions'
-import { loadEnhancedProposals, updateProposalStatus, getProposalIndicators, getUrgencyBackgroundColor, sortProposalsByUrgency } from '@/lib/proposals'
+import { loadShadchanSettings, saveShadchanSettings } from '@/lib/settings'
+import { loadEnhancedProposals, getProposalIndicators, getUrgencyBackgroundColor, sortProposalsByUrgency } from '@/lib/proposals'
 import { EnhancedProposal, ProposalsFilter } from '@/types'
 import { ProposalCard } from '@/components/ui/ProposalCard'
 import { ProposalBadges, UrgencyIndicator } from '@/components/ui/ProposalBadges'
@@ -34,7 +36,7 @@ interface DashboardPageProps {
   }
 }
 
-type TabType = 'matches' | 'proposals' | 'import' | 'settings' | 'history'
+type TabType = 'matches' | 'proposals' | 'import' | 'settings' | 'advanced-settings' | 'history'
 
 export const DashboardPage = ({ user }: DashboardPageProps) => {
   const [activeTab, setActiveTab] = useState<TabType>('matches')
@@ -55,7 +57,11 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
   const [activeProposalsCount, setActiveProposalsCount] = useState(0)
   const [urgentProposalsCount, setUrgentProposalsCount] = useState(0)
 
-  const [candidates] = useState<{ males: DetailedCandidate[], females: DetailedCandidate[] } | null>(null)
+  // State להגדרות מתקדמות - חדש!
+  const [advancedSettings, setAdvancedSettings] = useState<AdvancedMatchingSettings | null>(null)
+  const [isLoadingSettings, setIsLoadingSettings] = useState(false)
+
+  // const [candidates] = useState<{ males: DetailedCandidate[], females: DetailedCandidate[] } | null>(null)
 
   // פונקציה לטעינת מספר ההצעות הפעילות בלבד (מהירה)
   const loadActiveProposalsCount = useCallback(async () => {
@@ -80,6 +86,29 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
     }
   }, [])
 
+  // פונקציה לטעינת הגדרות השדכן - חדש!
+  const loadAdvancedSettings = useCallback(async () => {
+    if (!shadchanId) return
+    
+    try {
+      setIsLoadingSettings(true)
+      const settings = await loadShadchanSettings(shadchanId)
+      setAdvancedSettings(settings)
+    } catch (error) {
+      console.error('שגיאה בטעינת הגדרות מתקדמות:', error)
+    } finally {
+      setIsLoadingSettings(false)
+    }
+  }, [shadchanId])
+
+  // פונקציה לשמירת הגדרות השדכן - חדש!
+  const saveAdvancedSettings = useCallback(async (settings: AdvancedMatchingSettings) => {
+    if (!shadchanId) throw new Error('לא נמצא מזהה שדכן')
+    
+    await saveShadchanSettings(shadchanId, settings)
+    setAdvancedSettings(settings)
+  }, [shadchanId])
+
   useEffect(() => {
     // קבלת Access Token מSupabase
     const getAccessToken = async () => {
@@ -92,7 +121,7 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
     // הוספת דיבוג לבדיקת סטטוס האימות
     const initializeAuth = async () => {
       // בדיקת סשן נוכחי
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+      const { data: { session } } = await supabase.auth.getSession()
       
       if (!session) {
         setAuthStatus('unauthenticated')
@@ -125,12 +154,20 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
     initializeAuth()
   }, [loadActiveProposalsCount])
 
+  // טעינת הגדרות כשיש shadchanId - חדש!
+  useEffect(() => {
+    if (shadchanId) {
+      loadAdvancedSettings()
+    }
+  }, [shadchanId, loadAdvancedSettings])
+
   const tabs = [
     { id: 'matches' as TabType, label: 'התאמות חדשות', icon: Heart, count: 0 },
     { id: 'proposals' as TabType, label: 'הצעות פעילות', icon: Users, count: activeProposalsCount },
     { id: 'import' as TabType, label: 'ייבוא מועמדים', icon: Upload, count: 0 },
     { id: 'history' as TabType, label: 'היסטוריה', icon: History, count: 0 },
     { id: 'settings' as TabType, label: 'הגדרות', icon: Settings, count: 0 },
+    { id: 'advanced-settings' as TabType, label: 'הגדרות מתקדמות', icon: Sliders, count: 0 },
   ]
 
   // אם עדיין בודק אימות
@@ -194,6 +231,7 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
           globalScanState={globalScanState}
           setGlobalScanState={setGlobalScanState}
           onProposalCountChange={setActiveProposalsCount}
+          advancedSettings={advancedSettings}
         />
       case 'proposals':
         return <ProposalsTab accessToken={accessToken} onCountChange={setActiveProposalsCount} onUrgentCountChange={setUrgentProposalsCount} shadchanId={shadchanId} />
@@ -203,12 +241,19 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
         return <HistoryTab accessToken={accessToken} />
       case 'settings':
         return <SettingsTab accessToken={accessToken} />
+      case 'advanced-settings':
+        return <AdvancedSettingsPanel 
+          currentSettings={advancedSettings || undefined}
+          onSave={saveAdvancedSettings}
+          isLoading={isLoadingSettings}
+        />
       default:
         return <MatchesTab 
           accessToken={accessToken} 
           globalScanState={globalScanState}
           setGlobalScanState={setGlobalScanState}
           onProposalCountChange={setActiveProposalsCount}
+          advancedSettings={advancedSettings}
         />
     }
   }
@@ -413,7 +458,8 @@ const MatchesTab = ({
   accessToken, 
   globalScanState, 
   setGlobalScanState,
-  onProposalCountChange
+  onProposalCountChange,
+  advancedSettings
 }: { 
   accessToken: string | null
   globalScanState: {
@@ -425,11 +471,12 @@ const MatchesTab = ({
     progress: { current: number, total: number, message: string } | null
   }>>
   onProposalCountChange: (count: number) => void
+  advancedSettings: AdvancedMatchingSettings | null
 }) => {
   const [matches, setMatches] = useState<MatchProposal[]>([])
   const [loading, setLoading] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
-  const [candidates, setCandidates] = useState<{ males: DetailedCandidate[], females: DetailedCandidate[] } | null>(null)
+  const [candidates] = useState<{ males: DetailedCandidate[], females: DetailedCandidate[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showNewScanWarning, setShowNewScanWarning] = useState(false)
   const [unprocessedCount, setUnprocessedCount] = useState(0)
@@ -543,8 +590,7 @@ const MatchesTab = ({
       const generatedMatches = await generateMatches(
         candidatesData.males,
         candidatesData.females,
-        5, // סף לוגי - רק התאמות איכותיות
-        10 // יוחזרו 10 הטובות ביותר אחרי ניתוח GPT של כולם
+        advancedSettings || undefined // משתמש בהגדרות השדכן או ברירת מחדל
       )
 
       if (generatedMatches.length === 0) {
@@ -598,25 +644,26 @@ const MatchesTab = ({
     }
   }
 
-  const getRecommendationColor = (recommendation: string) => {
-    switch (recommendation) {
-      case 'highly_recommended': return 'bg-green-100 text-green-800'
-      case 'recommended': return 'bg-blue-100 text-blue-800'
-      case 'consider': return 'bg-yellow-100 text-yellow-800'
-      case 'not_recommended': return 'bg-red-100 text-red-800'
-      default: return 'bg-gray-100 text-gray-800'
-    }
-  }
+  // פונקציות עזר שמורות (כרגע לא בשימוש)
+  // const getRecommendationColor = (recommendation: string) => {
+  //   switch (recommendation) {
+  //     case 'highly_recommended': return 'bg-green-100 text-green-800'
+  //     case 'recommended': return 'bg-blue-100 text-blue-800'
+  //     case 'consider': return 'bg-yellow-100 text-yellow-800'
+  //     case 'not_recommended': return 'bg-red-100 text-red-800'
+  //     default: return 'bg-gray-100 text-gray-800'
+  //   }
+  // }
 
-  const getRecommendationText = (recommendation: string) => {
-    switch (recommendation) {
-      case 'highly_recommended': return 'מומלץ מאוד'
-      case 'recommended': return 'מומלץ'
-      case 'consider': return 'לשקול'
-      case 'not_recommended': return 'לא מומלץ'
-      default: return 'לבדוק'
-    }
-  }
+  // const getRecommendationText = (recommendation: string) => {
+  //   switch (recommendation) {
+  //     case 'highly_recommended': return 'מומלץ מאוד'
+  //     case 'recommended': return 'מומלץ'
+  //     case 'consider': return 'לשקול'
+  //     case 'not_recommended': return 'לא מומלץ'
+  //     default: return 'לבדוק'
+  //   }
+  // }
 
   // אם עדיין בטעינה ראשונית
   if (initialLoading) {
@@ -721,7 +768,6 @@ const MatchesTab = ({
             <MatchCard 
               key={match.id} 
               match={match} 
-              matches={matches}
               accessToken={accessToken}
                               onStatusUpdate={async (matchId, newStatus) => {
                   try {
@@ -1833,7 +1879,6 @@ const HistoryTab = ({ accessToken }: { accessToken: string | null }) => {
             <MatchCard 
               key={match.id} 
               match={match} 
-              matches={selectedSession.session_data}
               accessToken={accessToken}
                              onStatusUpdate={async (matchId, newStatus) => {
                  try {
@@ -2010,7 +2055,7 @@ const HistoryTab = ({ accessToken }: { accessToken: string | null }) => {
 const ImportTab: React.FC<{ accessToken: string | null }> = ({ accessToken }) => {
   const [loading, setLoading] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
-  const [candidates, setCandidates] = useState<{ males: DetailedCandidate[], females: DetailedCandidate[] } | null>(null)
+  const [candidates] = useState<{ males: DetailedCandidate[], females: DetailedCandidate[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   // טעינת נתונים שמורים בעת העלאת הקומפוננט
@@ -2024,7 +2069,7 @@ const ImportTab: React.FC<{ accessToken: string | null }> = ({ accessToken }) =>
       const savedCandidates = localStorage.getItem('importedCandidates')
       if (savedCandidates) {
         const parsedCandidates = JSON.parse(savedCandidates)
-        setCandidates(parsedCandidates)
+        // setCandidates(parsedCandidates)
         console.log('טעון מועמדים שמורים:', parsedCandidates.males?.length || 0, 'בנים,', parsedCandidates.females?.length || 0, 'בנות')
       }
     } catch (error) {
@@ -2077,7 +2122,7 @@ const ImportTab: React.FC<{ accessToken: string | null }> = ({ accessToken }) =>
       // שמירת הנתונים ב-localStorage
       localStorage.setItem('importedCandidates', JSON.stringify(data))
       
-      setCandidates(data)
+      // setCandidates(data)
       
       console.log(`✅ נטענו ${data.males?.length || 0} בנים ו-${data.females?.length || 0} בנות`)
       
@@ -2152,7 +2197,7 @@ const ImportTab: React.FC<{ accessToken: string | null }> = ({ accessToken }) =>
               <button
                 onClick={() => {
                   localStorage.removeItem('importedCandidates')
-                  setCandidates(null)
+                  // setCandidates(null)
                   setError(null)
                 }}
                 className="text-red-600 hover:text-red-800 text-sm flex items-center gap-1"
@@ -2226,7 +2271,7 @@ const SettingsTab = ({ accessToken }: { accessToken: string | null }) => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('shadchanim')
         .select('google_sheet_id, openai_api_key')
         .eq('auth_user_id', user.id)
@@ -2416,9 +2461,8 @@ const SettingsTab = ({ accessToken }: { accessToken: string | null }) => {
 }
 
 // רכיב להצגת הצעת התאמה משופרת
-const MatchCard = ({ match, matches, onStatusUpdate, accessToken }: { 
+const MatchCard = ({ match, onStatusUpdate, accessToken }: { 
   match: MatchProposal, 
-  matches: MatchProposal[],
   onStatusUpdate?: (matchId: string, newStatus: 'ready_for_processing' | 'rejected') => void,
   accessToken: string | null
 }) => {
