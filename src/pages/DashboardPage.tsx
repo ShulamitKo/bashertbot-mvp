@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Heart, Users, Upload, Settings, TrendingUp, AlertTriangle, ArrowLeft, History, Trash2, Sliders } from 'lucide-react'
+import { Heart, Users, Upload, Settings, TrendingUp, AlertTriangle, ArrowLeft, History, Trash2, Sliders, Eye, Loader2, X, User, MessageSquare } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { debugAuthStatus, refreshAuthToken } from '@/lib/auth'
 import { loadCandidatesFromSheet, DetailedCandidate } from '@/lib/google-sheets'
@@ -24,7 +24,7 @@ import {
   checkAuthConnection
 } from '@/lib/sessions'
 import { loadShadchanSettings, saveShadchanSettings } from '@/lib/settings'
-import { loadEnhancedProposals, getProposalIndicators, getUrgencyBackgroundColor, sortProposalsByUrgency } from '@/lib/proposals'
+import { loadEnhancedProposals, loadFailedProposals, restoreProposalToActive, getProposalIndicators, getUrgencyBackgroundColor, sortProposalsByUrgency } from '@/lib/proposals'
 import { EnhancedProposal, ProposalsFilter } from '@/types'
 import { ProposalCard } from '@/components/ui/ProposalCard'
 import { ProposalBadges, UrgencyIndicator } from '@/components/ui/ProposalBadges'
@@ -36,7 +36,7 @@ interface DashboardPageProps {
   }
 }
 
-type TabType = 'matches' | 'proposals' | 'import' | 'settings' | 'advanced-settings' | 'history'
+type TabType = 'matches' | 'proposals' | 'import' | 'settings' | 'advanced-settings' | 'history' | 'proposals-history'
 
 export const DashboardPage = ({ user }: DashboardPageProps) => {
   const [activeTab, setActiveTab] = useState<TabType>('matches')
@@ -165,7 +165,8 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
     { id: 'matches' as TabType, label: 'התאמות חדשות', icon: Heart, count: 0 },
     { id: 'proposals' as TabType, label: 'הצעות פעילות', icon: Users, count: activeProposalsCount },
     { id: 'import' as TabType, label: 'ייבוא מועמדים', icon: Upload, count: 0 },
-    { id: 'history' as TabType, label: 'היסטוריה', icon: History, count: 0 },
+    { id: 'history' as TabType, label: 'היסטוריית התאמות', icon: History, count: 0 },
+    { id: 'proposals-history' as TabType, label: 'היסטוריית הצעות', icon: TrendingUp, count: 0 },
     { id: 'settings' as TabType, label: 'הגדרות', icon: Settings, count: 0 },
     { id: 'advanced-settings' as TabType, label: 'הגדרות מתקדמות', icon: Sliders, count: 0 },
   ]
@@ -232,13 +233,16 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
           setGlobalScanState={setGlobalScanState}
           onProposalCountChange={setActiveProposalsCount}
           advancedSettings={advancedSettings}
+          loadActiveProposalsCount={loadActiveProposalsCount}
         />
       case 'proposals':
-        return <ProposalsTab accessToken={accessToken} onCountChange={setActiveProposalsCount} onUrgentCountChange={setUrgentProposalsCount} shadchanId={shadchanId} />
+        return <ProposalsTab accessToken={accessToken} onCountChange={setActiveProposalsCount} onUrgentCountChange={setUrgentProposalsCount} shadchanId={shadchanId} loadActiveProposalsCount={loadActiveProposalsCount} />
       case 'import':
         return <ImportTab accessToken={accessToken} />
       case 'history':
         return <HistoryTab accessToken={accessToken} />
+      case 'proposals-history':
+        return <ProposalsHistoryTab accessToken={accessToken} loadActiveProposalsCount={loadActiveProposalsCount} />
       case 'settings':
         return <SettingsTab accessToken={accessToken} />
       case 'advanced-settings':
@@ -254,6 +258,7 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
           setGlobalScanState={setGlobalScanState}
           onProposalCountChange={setActiveProposalsCount}
           advancedSettings={advancedSettings}
+          loadActiveProposalsCount={loadActiveProposalsCount}
         />
     }
   }
@@ -459,7 +464,8 @@ const MatchesTab = ({
   globalScanState, 
   setGlobalScanState,
   onProposalCountChange,
-  advancedSettings
+  advancedSettings,
+  loadActiveProposalsCount
 }: { 
   accessToken: string | null
   globalScanState: {
@@ -472,7 +478,10 @@ const MatchesTab = ({
   }>>
   onProposalCountChange: (count: number) => void
   advancedSettings: AdvancedMatchingSettings | null
+  loadActiveProposalsCount?: () => Promise<void> // אופציונלי - לעדכון מונה מיידי
 }) => {
+  // מונע אזהרה על פרמטר שלא נמצא בשימוש
+  React.useEffect(() => {}, [loadActiveProposalsCount])
   const [matches, setMatches] = useState<MatchProposal[]>([])
   const [loading, setLoading] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
@@ -929,23 +938,18 @@ const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newS
     if (approvedMatch) {
       await moveMatchToProposals(approvedMatch)
       
-      // עדכון מונה ההצעות הפעילות מיד
-      if (onProposalCountChange) {
-        // המתנה קצרה לוודא שההצעה נשמרה במסד הנתונים
-        setTimeout(async () => {
-          try {
-            const { data: currentProposals } = await supabase
-              .from('match_proposals')
-              .select('id')
-              .in('status', ['ready_for_processing', 'ready_for_contact', 'contacting', 'awaiting_response', 'meeting_scheduled', 'meeting_completed', 'completed', 'rejected_by_candidate', 'closed', 'in_meeting_process'])
-            
-            const newCount = currentProposals?.length || 0
-            onProposalCountChange(newCount)
-          } catch (error) {
-            console.error('שגיאה בעדכון מונה הצעות:', error)
-          }
-        }, 200) // המתנה קצרה לוודא שההכנסה הסתיימה
-      }
+      // עדכון מיידי של מונה ההצעות הפעילות
+      setTimeout(async () => {
+        const { data: currentProposals } = await supabase
+          .from('match_proposals')
+          .select('id')
+          .in('status', ['ready_for_processing', 'ready_for_contact', 'contacting', 'awaiting_response', 'schedule_meeting', 'meeting_scheduled', 'in_meeting_process', 'meeting_completed', 'completed'])
+        
+        const count = currentProposals?.length || 0
+        if (onProposalCountChange) {
+          onProposalCountChange(count)
+        }
+      }, 200) // המתנה קצרה לוודא שההצעה נשמרה במסד הנתונים
     }
   }
   
@@ -1229,7 +1233,7 @@ const ProposalGridCard = ({ proposal, onClick }: { proposal: EnhancedProposal, o
 }
 
 // רכיב טאב הצעות
-const ProposalsTab = ({ accessToken, onCountChange, onUrgentCountChange, shadchanId }: { accessToken: string | null, onCountChange: (count: number) => void, onUrgentCountChange: (count: number) => void, shadchanId: string | null }) => {
+const ProposalsTab = ({ accessToken, onCountChange, onUrgentCountChange, shadchanId, loadActiveProposalsCount }: { accessToken: string | null, onCountChange: (count: number) => void, onUrgentCountChange: (count: number) => void, shadchanId: string | null, loadActiveProposalsCount?: () => Promise<void> }) => {
   const [proposals, setProposals] = useState<EnhancedProposal[]>([])
   const [filteredProposals, setFilteredProposals] = useState<EnhancedProposal[]>([]) // הצעות מסוננות לתצוגה
   const [loading, setLoading] = useState(true)
@@ -1434,6 +1438,10 @@ const ProposalsTab = ({ accessToken, onCountChange, onUrgentCountChange, shadcha
           
           return newProposals
         })
+        // עדכון מיידי נוסף של מונה כללי
+        if (loadActiveProposalsCount) {
+          await loadActiveProposalsCount()
+        }
         console.log('✅ הצעה עודכנה בהצלחה:', proposalId)
       } else {
         // אם ההצעה לא קיימת יותר ברשימת הפעילות (שינוי סטטוס) - הסרה מהרשימה
@@ -1450,6 +1458,10 @@ const ProposalsTab = ({ accessToken, onCountChange, onUrgentCountChange, shadcha
           
           return newProposals
         })
+        // עדכון מיידי נוסף של מונה כללי
+        if (loadActiveProposalsCount) {
+          await loadActiveProposalsCount()
+        }
       }
     } catch (error) {
       console.error('❌ שגיאה בעדכון הצעה יחידה:', error)
@@ -1901,6 +1913,7 @@ const HistoryTab = ({ accessToken }: { accessToken: string | null }) => {
                      const approvedMatch = updatedMatches.find(m => m.id === matchId)
                      if (approvedMatch) {
                        await moveMatchToProposals(approvedMatch)
+                       // המונה יתעדכן אוטומטית כאשר נעבור לטאב ההצעות
                      }
                    }
                    
@@ -3094,4 +3107,384 @@ const ProfilesModal = ({
       </div>
     </div>
   )
-} 
+}
+
+// רכיב טאב היסטוריית הצעות
+const ProposalsHistoryTab = ({ accessToken, loadActiveProposalsCount }: { accessToken: string | null, loadActiveProposalsCount?: () => Promise<void> }) => {
+  const [failedProposals, setFailedProposals] = useState<EnhancedProposal[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedProposal, setSelectedProposal] = useState<EnhancedProposal | null>(null)
+  const [isRestoring, setIsRestoring] = useState<string | null>(null)
+
+  useEffect(() => {
+    loadFailedProposalsHistory()
+  }, [])
+
+  const loadFailedProposalsHistory = async () => {
+    if (!accessToken) {
+      setLoading(false)
+      return
+    }
+    
+    try {
+      const failed = await loadFailedProposals(accessToken)
+      setFailedProposals(failed)
+    } catch (error) {
+      console.error('שגיאה בטעינת היסטוריית הצעות כושלות:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // פונקציה להצגת הודעת הצלחה ירוקה
+  const showSuccessMessage = (message: string) => {
+    const successMsg = document.createElement('div')
+    successMsg.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 transition-all duration-300'
+    successMsg.textContent = message
+    document.body.appendChild(successMsg)
+    setTimeout(() => {
+      successMsg.style.opacity = '0'
+      setTimeout(() => {
+        if (document.body.contains(successMsg)) {
+          document.body.removeChild(successMsg)
+        }
+      }, 300)
+    }, 3000)
+  }
+
+  // פונקציה להצגת הודעת שגיאה אדומה
+  const showErrorMessage = (message: string) => {
+    const errorMsg = document.createElement('div')
+    errorMsg.className = 'fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 transition-all duration-300'
+    errorMsg.textContent = message
+    document.body.appendChild(errorMsg)
+    setTimeout(() => {
+      errorMsg.style.opacity = '0'
+      setTimeout(() => {
+        if (document.body.contains(errorMsg)) {
+          document.body.removeChild(errorMsg)
+        }
+      }, 300)
+    }, 3000)
+  }
+
+  const handleRestoreProposal = async (proposalId: string) => {
+    if (!accessToken) return
+    
+    try {
+      setIsRestoring(proposalId)
+      await restoreProposalToActive(proposalId, 'ההצעה הוחזרה לפעילות')
+      // הסר את ההצעה מהרשימה לאחר שחזור מוצלח
+      setFailedProposals(prev => prev.filter(p => p.id !== proposalId))
+      // עדכון מיידי של מונה ההצעות הפעילות
+      if (loadActiveProposalsCount) {
+        await loadActiveProposalsCount()
+      }
+      showSuccessMessage('✅ ההצעה הוחזרה בהצלחה לפעילות!')
+    } catch (error) {
+      console.error('שגיאה בשחזור הצעה:', error)
+      showErrorMessage('❌ שגיאה בשחזור ההצעה')
+    } finally {
+      setIsRestoring(null)
+    }
+  }
+
+  if (loading) {
+    return <LoadingSpinner message="טוען היסטוריית הצעות..." />
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-bold">היסטוריית הצעות</h2>
+        <span className="text-sm text-gray-600">
+          {failedProposals.length} הצעות שנסגרו
+        </span>
+      </div>
+
+      {failedProposals.length === 0 ? (
+        <div className="text-center py-12">
+          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <TrendingUp className="w-8 h-8 text-gray-400" />
+          </div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">אין הצעות בהיסטוריה</h3>
+          <p className="text-gray-600">
+            כאן יופיעו הצעות שנדחו או נסגרו
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {failedProposals.map((proposal) => (
+            <div key={proposal.id} className="bg-white border border-red-200 rounded-lg p-6 hover:shadow-md transition-shadow">
+              <div className="flex justify-between items-start mb-4">
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-2">
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      הצעה #{proposal.id.slice(-8)}
+                    </h3>
+                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                      proposal.status === 'rejected_by_candidate' 
+                        ? 'bg-red-100 text-red-800 border border-red-200'
+                        : 'bg-gray-100 text-gray-800 border border-gray-200'
+                    }`}>
+                      {proposal.status === 'rejected_by_candidate' ? 'נדחתה על ידי מועמד' : 'נסגרה'}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {new Date(proposal.updated_at || '').toLocaleDateString('he-IL')}
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center gap-6 text-sm">
+                    <span className="text-blue-700 font-medium">
+                      👤 {proposal.boyDetails?.name || proposal.boy_data?.name || 'ללא שם'}
+                    </span>
+                    <span className="text-gray-400">↔</span>
+                    <span className="text-pink-700 font-medium">
+                      👤 {proposal.girlDetails?.name || proposal.girl_data?.name || 'ללא שם'}
+                    </span>
+                  </div>
+                </div>
+                
+                <div className="text-left">
+                  <div className="text-xs text-gray-500">
+                    {Math.floor((new Date().getTime() - new Date(proposal.created_at || '').getTime()) / (1000 * 60 * 60 * 24))} ימים בתהליך
+                  </div>
+                  {proposal.finalScore && (
+                    <div className="text-xs text-gray-400 mt-1">
+                      ציון: {proposal.finalScore.toFixed(1)}/10
+                    </div>
+                  )}
+                </div>
+              </div>
+              
+              {/* הערה אחרונה אם קיימת */}
+              {proposal.notes && (
+                <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+                  <p className="text-sm text-gray-700 leading-relaxed">
+                    <span className="font-medium text-gray-500">הערה אחרונה:</span> {proposal.notes}
+                  </p>
+                </div>
+              )}
+              
+              {/* כפתורי פעולה */}
+              <div className="mt-4 flex gap-3">
+                <Button
+                  onClick={() => setSelectedProposal(proposal)}
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 text-blue-700 border-blue-200 hover:bg-blue-50"
+                >
+                  <Eye className="w-4 h-4 mr-2" />
+                  צפה בפרטי ההצעה
+                </Button>
+                <Button
+                  onClick={() => handleRestoreProposal(proposal.id)}
+                  disabled={isRestoring === proposal.id}
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 text-green-700 border-green-200 hover:bg-green-50"
+                >
+                  {isRestoring === proposal.id ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      משחזר...
+                    </>
+                  ) : (
+                    <>
+                      <ArrowLeft className="w-4 h-4 mr-2" />
+                      החזר הצעה לפעילות
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      
+      {/* מודל תצוגה מפורטת */}
+      {selectedProposal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <h2 className="text-xl font-bold text-gray-900">
+                פרטי הצעה #{selectedProposal.id.slice(-8)}
+              </h2>
+              <button
+                onClick={() => setSelectedProposal(null)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
+              <ReadOnlyProposalView proposal={selectedProposal} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// רכיב תצוגה לקריאה בלבד עבור הצעות מההיסטוריה
+const ReadOnlyProposalView = ({ proposal }: { proposal: EnhancedProposal }) => {
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('he-IL', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    })
+  }
+
+  const formatTime = (dateString: string) => {
+    return new Date(dateString).toLocaleTimeString('he-IL', {
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  }
+
+  const boyData = proposal.boyDetails || proposal.boy_data
+  const girlData = proposal.girlDetails || proposal.girl_data
+
+  return (
+    <div className="space-y-6">
+      {/* כותרת ומידע בסיסי */}
+      <div className="border-b border-gray-200 pb-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-xl font-bold text-gray-900">
+            הצעה #{proposal.id.slice(-8)}
+          </h3>
+          <div className="flex items-center gap-3">
+            <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+              proposal.status === 'rejected_by_candidate' 
+                ? 'bg-red-100 text-red-800 border border-red-200'
+                : 'bg-gray-100 text-gray-800 border border-gray-200'
+            }`}>
+              {proposal.status === 'rejected_by_candidate' ? 'נדחתה על ידי מועמד' : 'נסגרה'}
+            </span>
+            {proposal.finalScore && (
+              <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
+                ציון התאמה: {proposal.finalScore.toFixed(1)}/10
+              </span>
+            )}
+          </div>
+        </div>
+        
+        <div className="text-sm text-gray-600 space-y-1">
+          <div>נוצר: {formatDate(proposal.created_at || '')} בשעה {formatTime(proposal.created_at || '')}</div>
+          <div>עודכן לאחרונה: {formatDate(proposal.updated_at || '')} בשעה {formatTime(proposal.updated_at || '')}</div>
+          <div>זמן בתהליך: {Math.floor((new Date().getTime() - new Date(proposal.created_at || '').getTime()) / (1000 * 60 * 60 * 24))} ימים</div>
+        </div>
+      </div>
+
+      {/* פרטי המועמדים */}
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* פרטי הבחור */}
+        <div className="bg-blue-50 rounded-lg p-5">
+          <h4 className="text-lg font-semibold text-blue-800 mb-3 flex items-center">
+            <User className="w-5 h-5 mr-2" />
+            פרטי הבחור
+          </h4>
+          <div className="space-y-2 text-sm">
+            <div><span className="font-medium text-gray-600">שם:</span> {boyData?.name || 'לא צוין'}</div>
+            <div><span className="font-medium text-gray-600">גיל:</span> {boyData?.age || 'לא צוין'}</div>
+            <div><span className="font-medium text-gray-600">עיר:</span> {boyData?.city || 'לא צוין'}</div>
+            <div><span className="font-medium text-gray-600">מקצוע:</span> {boyData?.profession || 'לא צוין'}</div>
+            <div><span className="font-medium text-gray-600">רמת דתיות:</span> {boyData?.religiosity_level || 'לא צוין'}</div>
+            <div><span className="font-medium text-gray-600">עדה:</span> {boyData?.origin || 'לא צוין'}</div>
+            {boyData?.height && <div><span className="font-medium text-gray-600">גובה:</span> {boyData.height}</div>}
+            {boyData?.phone && <div><span className="font-medium text-gray-600">טלפון:</span> {boyData.phone}</div>}
+            {boyData?.email && <div><span className="font-medium text-gray-600">אימייל:</span> {boyData.email}</div>}
+          </div>
+        </div>
+
+        {/* פרטי הבחורה */}
+        <div className="bg-pink-50 rounded-lg p-5">
+          <h4 className="text-lg font-semibold text-pink-800 mb-3 flex items-center">
+            <User className="w-5 h-5 mr-2" />
+            פרטי הבחורה
+          </h4>
+          <div className="space-y-2 text-sm">
+            <div><span className="font-medium text-gray-600">שם:</span> {girlData?.name || 'לא צוין'}</div>
+            <div><span className="font-medium text-gray-600">גיל:</span> {girlData?.age || 'לא צוין'}</div>
+            <div><span className="font-medium text-gray-600">עיר:</span> {girlData?.city || 'לא צוין'}</div>
+            <div><span className="font-medium text-gray-600">מקצוע:</span> {girlData?.profession || 'לא צוין'}</div>
+            <div><span className="font-medium text-gray-600">רמת דתיות:</span> {girlData?.religiosity_level || 'לא צוין'}</div>
+            <div><span className="font-medium text-gray-600">עדה:</span> {girlData?.origin || 'לא צוין'}</div>
+            {girlData?.height && <div><span className="font-medium text-gray-600">גובה:</span> {girlData.height}</div>}
+            {girlData?.phone && <div><span className="font-medium text-gray-600">טלפון:</span> {girlData.phone}</div>}
+            {girlData?.email && <div><span className="font-medium text-gray-600">אימייל:</span> {girlData.email}</div>}
+          </div>
+        </div>
+      </div>
+
+      {/* הערות */}
+      {(proposal.notesHistory && proposal.notesHistory.length > 0) || proposal.notes ? (
+        <div className="bg-gray-50 rounded-lg p-4">
+          <h4 className="text-lg font-semibold text-gray-800 mb-3 flex items-center">
+            <MessageSquare className="w-5 h-5 mr-2" />
+            הערות {proposal.notesHistory && `(${proposal.notesHistory.length + (proposal.notes ? 1 : 0)} הערות)`}
+          </h4>
+          
+          <div className="space-y-3">
+            {/* הערות מהיסטוריה - בסדר הפוך (החדשות קודם) */}
+            {proposal.notesHistory && proposal.notesHistory
+              .slice()
+              .reverse()
+              .map((note, index) => (
+                <div key={index} className="border-l-4 border-blue-200 bg-white p-3 rounded-r-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-gray-500">
+                      {formatDate(note.created_at)} בשעה {formatTime(note.created_at)}
+                    </span>
+                    {note.status && (
+                      <span className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded-full">
+                        סטטוס: {note.status}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-sm text-gray-700 whitespace-pre-wrap">
+                    {note.content}
+                  </div>
+                  {note.edited_at && note.edited_at !== note.created_at && (
+                    <div className="text-xs text-gray-400 mt-1 italic">
+                      נערך בתאריך: {formatDate(note.edited_at)} בשעה {formatTime(note.edited_at)}
+                    </div>
+                  )}
+                </div>
+              ))
+            }
+            
+            {/* הערה נוכחית (אם קיימת ולא חלק מההיסטוריה) */}
+            {proposal.notes && (
+              <div className="border-l-4 border-green-200 bg-white p-3 rounded-r-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-green-600 font-medium">
+                    הערה נוכחית
+                  </span>
+                </div>
+                <div className="text-sm text-gray-700 whitespace-pre-wrap">
+                  {proposal.notes}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {/* מידע נוסף על ההתאמה */}
+      {proposal.ai_reasoning && (
+        <div className="bg-yellow-50 rounded-lg p-4">
+          <h4 className="text-lg font-semibold text-yellow-800 mb-3">
+            נימוק ההתאמה
+          </h4>
+          <div className="text-sm text-gray-700 whitespace-pre-wrap">
+            {proposal.ai_reasoning}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

@@ -4,6 +4,96 @@ import { EnhancedProposal } from '../types'
 
 // ============ פונקציות עזר לניהול הצעות ============
 
+// טעינת הצעות שנכשלו (rejected או closed) להיסטוריה
+export const loadFailedProposals = async (accessToken: string): Promise<EnhancedProposal[]> => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      throw new Error('משתמש לא מחובר')
+    }
+
+    const { data: shadchan } = await supabase
+      .from('shadchanim')
+      .select('id, google_sheet_id')
+      .eq('auth_user_id', user.id)
+      .single()
+
+    if (!shadchan) {
+      throw new Error('לא נמצא פרופיל שדכן')
+    }
+
+    // טעינת הצעות שנכשלו בלבד
+    const { data: failedProposals, error } = await supabase
+      .from('match_proposals')
+      .select('*, notes_history')
+      .eq('shadchan_id', shadchan.id)
+      .in('status', ['rejected_by_candidate', 'closed']) // רק הסטטוסים שנכשלו
+      .order('updated_at', { ascending: false })
+
+    if (error) {
+      throw error
+    }
+
+    // טעינת מועמדים מהגיליון
+    let candidatesData: { males: DetailedCandidate[], females: DetailedCandidate[] } = { males: [], females: [] }
+    
+    if (shadchan.google_sheet_id && accessToken) {
+      try {
+        candidatesData = await loadCandidatesFromSheet(accessToken, shadchan.google_sheet_id)
+      } catch (error) {
+        console.warn('לא ניתן לטעון מועמדים מהגיליון להיסטוריה:', error)
+      }
+    }
+
+    // שילוב נתוני הצעות עם פרטי מועמדים (כמו ב-loadEnhancedProposals)
+    const enhancedFailedProposals: EnhancedProposal[] = (failedProposals || []).map((proposal) => {
+      const boyDetails = candidatesData.males.find(m => m.id === proposal.boy_row_id)
+      const girlDetails = candidatesData.females.find(f => f.id === proposal.girl_row_id)
+
+      const daysInProcess = Math.floor(
+        (new Date().getTime() - new Date(proposal.created_at || '').getTime()) / (1000 * 60 * 60 * 24)
+      )
+
+      const lastActivity = proposal.updated_at
+
+      // טיפול בהיסטוריית הערות
+      let notesHistory = proposal.notes_history || []
+      if (notesHistory.length === 0 && proposal.notes) {
+        notesHistory = [{
+          content: proposal.notes,
+          created_at: proposal.updated_at || proposal.created_at || new Date().toISOString()
+        }]
+      }
+
+      const updatedBoyData = boyDetails || proposal.boy_data
+      const updatedGirlData = girlDetails || proposal.girl_data
+
+      return {
+        ...proposal,
+        boyDetails: updatedBoyData,
+        girlDetails: updatedGirlData,
+        boy_data: updatedBoyData,
+        girl_data: updatedGirlData,
+        notesHistory,
+        daysInProcess,
+        lastActivity,
+        // ציונים (אם קיימים)
+        logicalScore: proposal.logical_score,
+        gptScore: proposal.gpt_score,
+        finalScore: proposal.final_score,
+        strengths: proposal.strengths ? JSON.parse(proposal.strengths) : [],
+        concerns: proposal.concerns ? JSON.parse(proposal.concerns) : []
+      } as EnhancedProposal
+    })
+
+    return enhancedFailedProposals
+
+  } catch (error) {
+    console.error('שגיאה בטעינת הצעות שנכשלו:', error)
+    throw error
+  }
+}
+
 // ************ סמנים ויזואליים חכמים 🚦 ************
 
 // פונקציה לקבלת סמנים ויזואליים לפי מצב ההצעה
@@ -648,7 +738,7 @@ export const updateCandidateResponse = async (
     // בדיקה שההצעה שייכת לשדכן וקבלת הנתונים הנוכחיים
     const { data: proposal } = await supabase
       .from('match_proposals')
-      .select('shadchan_id, boy_response, girl_response, boy_row_id, girl_row_id, notes_history')
+      .select('shadchan_id, boy_response, girl_response, boy_row_id, girl_row_id, notes_history, status')
       .eq('id', proposalId)
       .single()
 
@@ -670,12 +760,8 @@ export const updateCandidateResponse = async (
     const otherSide = side === 'boy' ? 'girl' : 'boy'
     const otherResponse = proposal[`${otherSide}_response` as keyof typeof proposal]
 
-    // עדכון סטטוס לפי התגובות
-    if (response === 'not_interested') {
-      updateData.status = 'rejected_by_candidate'
-      updateData.rejection_side = side
-      updateData.rejection_reason = rejectionReason || 'מועמד לא מעוניין'
-    } else if (response === 'interested' && otherResponse === 'interested') {
+    // עדכון סטטוס לפי התגובות - אל תשנה סטטוס כשמועמד לא מעוניין
+    if (response === 'interested' && otherResponse === 'interested') {
       // שני הצדדים מעוניינים - מעבר לשלב קביעת פגישה
       updateData.status = 'schedule_meeting'
     } else if (response === 'interested') {
@@ -698,7 +784,7 @@ export const updateCandidateResponse = async (
                           response === 'not_interested' ? 'לא מעוניין' : 'צריך זמן'
       
       if (response === 'not_interested') {
-        autoNote = `${finalBoyName} ענה: ${responseText} - ההצעה נדחתה${rejectionReason ? ` (סיבה: ${rejectionReason})` : ''}`
+        autoNote = `${finalBoyName} ענה: ${responseText}${rejectionReason ? ` (סיבה: ${rejectionReason})` : ''}. יש לעדכן את ${finalGirlName} ולסגור את ההצעה.`
       } else if (response === 'interested' && otherResponse === 'interested') {
         autoNote = `${finalBoyName} ענה: ${responseText} - שני הצדדים מעוניינים! יש לקבוע פגישה`
       } else if (response === 'interested') {
@@ -711,7 +797,7 @@ export const updateCandidateResponse = async (
                           response === 'not_interested' ? 'לא מעוניינת' : 'צריכה זמן'
       
       if (response === 'not_interested') {
-        autoNote = `${finalGirlName} ענתה: ${responseText} - ההצעה נדחתה${rejectionReason ? ` (סיבה: ${rejectionReason})` : ''}`
+        autoNote = `${finalGirlName} ענתה: ${responseText}${rejectionReason ? ` (סיבה: ${rejectionReason})` : ''}. יש לעדכן את ${finalBoyName} ולסגור את ההצעה.`
       } else if (response === 'interested' && otherResponse === 'interested') {
         autoNote = `${finalGirlName} ענתה: ${responseText} - שני הצדדים מעוניינים! יש לקבוע פגישה`
       } else if (response === 'interested') {
@@ -729,7 +815,7 @@ export const updateCandidateResponse = async (
         {
           content: autoNote,
           created_at: new Date().toISOString(),
-          status: updateData.status
+          status: updateData.status || proposal.status // שמירת הסטטוס הנוכחי אם לא השתנה
         }
       ]
       updateData.notes_history = updatedNotesHistory
@@ -766,6 +852,87 @@ export const updateCandidateResponse = async (
 
   } catch (error) {
     console.error('❌ [updateCandidateResponse] שגיאה בעדכון תגובת מועמד:', error)
+    return false
+  }
+}
+
+// החזרת הצעה לפעילות
+export const restoreProposalToActive = async (
+  proposalId: string,
+  notes?: string
+): Promise<boolean> => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      throw new Error('משתמש לא מחובר')
+    }
+
+    // קבלת פרטי השדכן והנתונים הנוכחיים של ההצעה
+    const { data: shadchan } = await supabase
+      .from('shadchanim')
+      .select('id')
+      .eq('auth_user_id', user.id)
+      .single()
+
+    if (!shadchan) {
+      throw new Error('לא נמצא פרופיל שדכן')
+    }
+
+    // בדיקת הרשאה והסטטוס הנוכחי
+    const { data: currentProposal } = await supabase
+      .from('match_proposals')
+      .select('status, notes_history, shadchan_id')
+      .eq('id', proposalId)
+      .single()
+
+    if (!currentProposal) {
+      throw new Error('הצעה לא נמצאה')
+    }
+
+    if (currentProposal.shadchan_id !== shadchan.id) {
+      throw new Error('אין הרשאה לעדכן הצעה זו')
+    }
+
+    // בדיקה שההצעה אכן בהיסטוריה
+    if (!['rejected_by_candidate', 'closed'].includes(currentProposal.status)) {
+      throw new Error('ניתן להחזיר רק הצעות שנסגרו או נדחו')
+    }
+
+    // הכנת היסטוריית הערות מעודכנת
+    let updatedNotesHistory = currentProposal.notes_history || []
+    const restoreNote = notes || 'ההצעה הוחזרה לפעילות'
+    
+    updatedNotesHistory = [
+      ...updatedNotesHistory,
+      {
+        content: restoreNote,
+        created_at: new Date().toISOString(),
+        status: 'ready_for_processing'
+      }
+    ]
+
+    // עדכון הסטטוס חזרה לפעילות
+    const { error: updateError } = await supabase
+      .from('match_proposals')
+      .update({
+        status: 'ready_for_processing',
+        updated_at: new Date().toISOString(),
+        notes: restoreNote,
+        notes_history: updatedNotesHistory,
+        // איפוס תגובות מועמדים כדי להתחיל מחדש
+        boy_response: null,
+        girl_response: null
+      })
+      .eq('id', proposalId)
+
+    if (updateError) {
+      throw updateError
+    }
+
+    return true
+
+  } catch (error) {
+    console.error('❌ [restoreProposalToActive] שגיאה בהחזרת הצעה לפעילות:', error)
     return false
   }
 } 
