@@ -6,6 +6,7 @@ import {
   calculateLogicalScore,  
 } from './google-sheets'
 import { supabase } from './supabase'
+import { buildSystemPrompt, createMatchPrompt } from './prompt-generator'
 
 const openai = new OpenAI({
   apiKey: (import.meta as any).env.VITE_OPENAI_API_KEY,
@@ -20,85 +21,79 @@ interface GPTMatchResponse {
   concerns?: string[]
 }
 
-// פונקציה ליצירת פרומפט מותאם לזוג ספציפי
-const createMatchPrompt = (male: DetailedCandidate, female: DetailedCandidate): string => {
-  return `האם קיימת התאמה זוגית בין שני המועמדים הבאים:
-
-**בחור:**
-- שם: ${male.name}
-- גיל: ${male.age}
-- מצב משפחתי: ${male.maritalStatus}
-- רמה דתית: ${male.religiousLevel}
-- עדה: ${male.community}
-- מקום מגורים: ${male.location}
-- השכלה: ${male.education}
-- מקצוע: ${male.profession}
-- תחביבים: ${male.hobbies || 'לא צוין'}
-- ערכים ואמונות: ${male.valuesAndBeliefs || 'לא צוין'}
-- מה אני מחפש: ${male.lookingFor || 'לא צוין'}
-- חשוב לי: ${male.importantQualities || 'לא צוין'}
-- דיל ברייקרס: ${male.dealBreakers || 'אין'}
-
-**בחורה:**
-- שם: ${female.name}
-- גיל: ${female.age}
-- מצב משפחתי: ${female.maritalStatus}
-- רמה דתית: ${female.religiousLevel}
-- עדה: ${female.community}
-- מקום מגורים: ${female.location}
-- השכלה: ${female.education}
-- מקצוע: ${female.profession}
-- תחביבים: ${female.hobbies || 'לא צוין'}
-- ערכים ואמונות: ${female.valuesAndBeliefs || 'לא צוין'}
-- מה אני מחפשת: ${female.lookingFor || 'לא צוין'}
-- חשוב לי: ${female.importantQualities || 'לא צוין'}
-- דיל ברייקרס: ${female.dealBreakers || 'אין'}
-
-בצע ניתוח עומק של ההתאמה הזוגית, תוך התחשבות ב:
-1. תאימות ערכית ורוחנית
-2. יכולת תקשורת וחיבור רגשי פוטנציאלי
-3. התאמה בסגנון חיים ובציפיות
-4. אתגרים פוטנציאליים וחוזקות
-
-אנא החזר בפורמט JSON:
-{
-  "score": [מספר בין 1-10],
-  "summary": "[נימוק קצר ומדויק למתן הציון]",
-  "strengths": ["נקודת חוזק 1", "נקודת חוזק 2", "נקודת חוזק 3"],
-  "concerns": ["אתגר 1", "אתגר 2"]
-}`
-}
+// הפונקציה הוסרה - משתמשים בזו המשותפת מ-prompt-generator.ts
 
 // פונקציה לפנייה ל-GPT לזוג בודד
 const analyzeMatchWithGPT = async (
   male: DetailedCandidate, 
   female: DetailedCandidate,
   gptSettings?: { model: string, temperature: number, maxTokens: number },
-  customPrompt?: string
+  customPrompt?: string,
+  advancedSettings?: AdvancedMatchingSettings
 ): Promise<GPTMatchResponse> => {
   console.log(`🤖 שולח ל-GPT לניתוח: ${male.name} - ${female.name}`)
   
   // ברירת מחדל להגדרות GPT
   const model = gptSettings?.model || 'gpt-4o-mini'
-  const temperature = gptSettings?.temperature || 0.4
+  const temperature = gptSettings?.temperature || 0.6
   const maxTokens = gptSettings?.maxTokens || 1000
   
+  // 🟦 DEBUG: הגדרות GPT
+  console.log(`🔧 [DEBUG] הגדרות GPT:`, {
+    model,
+    temperature,
+    maxTokens,
+    focusAreas: advancedSettings?.customGptSettings?.focusAreas,
+    analysisDepth: advancedSettings?.customGptSettings?.analysisDepth,
+    weights: advancedSettings?.weights
+  })
+  
+  // בניית הפרומפטים - שימוש בפונקציה המשותפת
+  const systemPrompt = customPrompt || buildSystemPrompt(advancedSettings)
+  const userPrompt = createMatchPrompt(male, female, advancedSettings)
+  
+  // 🟦 DEBUG: פרומפטים שנשלחים
+  console.log(`📝 [DEBUG] System Prompt:`)
+  console.log(systemPrompt)
+  console.log(`📝 [DEBUG] User Prompt:`)
+  console.log(userPrompt)
+  console.log(`📝 [DEBUG] אורך פרומפט: ${userPrompt.length} תווים`)
+  
   try {
-    const response = await openai.chat.completions.create({
+    const requestPayload = {
       model,
       messages: [
         {
-          role: 'system',
-          content: customPrompt || 'אתה שדכן מקצועי ומנוסה המתמחה בהתאמות זוגיות במגזר הדתי. אתה מנתח בזהירות את התאימות בין מועמדים ונותן ציון מדויק.'
+          role: 'system' as const,
+          content: systemPrompt
         },
         {
-          role: 'user',
-          content: createMatchPrompt(male, female)
+          role: 'user' as const,
+          content: userPrompt
         }
       ],
       temperature,
       max_tokens: maxTokens,
-      response_format: { type: "json_object" }
+      response_format: { type: "json_object" as const }
+    }
+    
+    // 🟦 DEBUG: בקשה שנשלחת ל-OpenAI
+    console.log(`📡 [DEBUG] בקשה ל-OpenAI:`, {
+      model: requestPayload.model,
+      temperature: requestPayload.temperature,
+      max_tokens: requestPayload.max_tokens,
+      messagesCount: requestPayload.messages.length,
+      totalChars: requestPayload.messages.reduce((sum, msg) => sum + msg.content.length, 0)
+    })
+
+    const response = await openai.chat.completions.create(requestPayload)
+
+    // 🟦 DEBUG: תשובה גולמית
+    console.log(`📨 [DEBUG] תשובה גולמית מ-OpenAI:`, {
+      choices: response.choices.length,
+      usage: response.usage,
+      model: response.model,
+      finishReason: response.choices[0]?.finish_reason
     })
 
     const content = response.choices[0]?.message?.content
@@ -106,12 +101,31 @@ const analyzeMatchWithGPT = async (
       throw new Error('אין תוכן בתשובה מ-GPT')
     }
 
+    // 🟦 DEBUG: תוכן התשובה
+    console.log(`📄 [DEBUG] תוכן התשובה מ-GPT:`)
+    console.log(content)
+
     const parsed = JSON.parse(content) as GPTMatchResponse
+    
+    // 🟦 DEBUG: תשובה מפוענחת
+    console.log(`🎯 [DEBUG] תשובה מפוענחת:`, {
+      score: parsed.score,
+      summaryLength: parsed.summary?.length || 0,
+      strengthsCount: parsed.strengths?.length || 0,
+      concernsCount: parsed.concerns?.length || 0,
+      strengths: parsed.strengths,
+      concerns: parsed.concerns
+    })
+    
     console.log(`✅ תשובה מ-GPT: ציון ${parsed.score}/10 - ${parsed.summary}`)
     
     return parsed
   } catch (error) {
     console.error('❌ שגיאה בפנייה ל-GPT:', error)
+    if (error instanceof Error) {
+      console.error('❌ פרטי השגיאה:', error.message)
+      console.error('❌ Stack trace:', error.stack)
+    }
     throw new Error(`שגיאה בניתוח ההתאמה: ${error}`)
   }
 }
@@ -220,7 +234,8 @@ const processPairsInBatches = async (
   pairs: any[], 
   batchSize: number = 3,
   gptSettings?: { model: string, temperature: number, maxTokens: number },
-  customPrompt?: string
+  customPrompt?: string,
+  advancedSettings?: AdvancedMatchingSettings
 ): Promise<MatchProposal[]> => {
   const matches: MatchProposal[] = []
   
@@ -230,7 +245,13 @@ const processPairsInBatches = async (
     // עיבוד הקבוצה במקביל
     const batchPromises = batch.map(async (pair) => {
       try {
-        const gptResponse = await analyzeMatchWithGPT(pair.male, pair.female, gptSettings, customPrompt)
+        const gptResponse = await analyzeMatchWithGPT(
+          pair.male, 
+          pair.female, 
+          gptSettings, 
+          customPrompt,
+          advancedSettings
+        )
         
         return {
           id: `${pair.male.name}-${pair.female.name}-${Date.now()}`,
@@ -283,18 +304,27 @@ export const generateMatches = async (
 ): Promise<MatchProposal[]> => {
   // הגדרות קבועות ומותאמות אישית
   const LOGICAL_THRESHOLD = 5  // סף לוגי קבוע איכותי (5/10)
-  const MAX_GPT_CANDIDATES = 20  // מקסימום זוגות לשליחה ל-GPT
-  const maxMatches = settings?.maxMatches || 10
+  const maxGptCandidates = settings?.maxMatches || 20  // כמות זוגות מובילים (שעברו בדיקת היתכנות) לשליחה ל-GPT
+  const maxMatches = maxGptCandidates  // מחזיר את כל מה שחוזר מ-GPT (ללא הגבלה נוספת)
   const weights = settings?.weights
   const hardFilters = settings?.hardFilters
   const gptSettings = settings?.gptSettings
   const customPrompt = settings?.customGptSettings?.customPrompt
   console.log(`🚀 מתחיל תהליך התאמה חכם משופר`)
   console.log(`📊 כמות בחורים: ${males.length}, בחורות: ${females.length}`)
-  console.log(`⚙️ סף לוגי קבוע: ${LOGICAL_THRESHOLD}/10, מקסימום ל-GPT: ${MAX_GPT_CANDIDATES}, יוחזרו: ${maxMatches}`)
+  console.log(`⚙️ סף לוגי קבוע: ${LOGICAL_THRESHOLD}/10, מקסימום ל-GPT: ${maxGptCandidates}, יוחזרו: ${maxMatches}`)
 
   // שלב 1+2: יצירת זוגות פוטנציאליים עם סינון וניקוד (עכשיו כולל בדיקת קיימות)
   const potentialPairs = await createPotentialPairs(males, females, LOGICAL_THRESHOLD, weights, hardFilters)
+  
+  // 🟦 DEBUG: פירוט הזוגות שנמצאו
+  console.log(`🔍 [DEBUG] פירוט זוגות פוטנציאליים:`)
+  potentialPairs.slice(0, 5).forEach((pair, index) => {
+    console.log(`${index + 1}. ${pair.male.name} (${pair.male.age}) + ${pair.female.name} (${pair.female.age}) = ציון לוגי: ${pair.logicalScore}/10`)
+  })
+  if (potentialPairs.length > 5) {
+    console.log(`... ועוד ${potentialPairs.length - 5} זוגות`)
+  }
   
   if (potentialPairs.length === 0) {
     console.log('❌ לא נמצאו זוגות חדשים העוברים את הסינון')
@@ -307,21 +337,47 @@ export const generateMatches = async (
   // מיון לפי ציון לוגי (מהגבוה לנמוך)
   potentialPairs.sort((a, b) => b.logicalScore - a.logicalScore)
   
-  // הגבלה למספר המקסימלי
-  const selectedPairs = potentialPairs.slice(0, MAX_GPT_CANDIDATES)
+  // 🟦 DEBUG: טווח ציונים לוגיים
+  console.log(`📈 [DEBUG] טווח ציונים לוגיים: ${potentialPairs[potentialPairs.length-1]?.logicalScore} - ${potentialPairs[0]?.logicalScore}`)
+  
+  // הגבלה למספר המקסימלי שקבע המשתמש (זוגות שעברו בדיקת היתכנות באלגוריתם)
+  const selectedPairs = potentialPairs.slice(0, maxGptCandidates)
+  
+  // 🟦 DEBUG: הזוגות שנבחרו ל-GPT
+  console.log(`🎯 [DEBUG] הזוגות שנבחרו לניתוח GPT:`)
+  selectedPairs.forEach((pair, index) => {
+    console.log(`${index + 1}. ${pair.male.name} + ${pair.female.name} (ציון לוגי: ${pair.logicalScore})`)
+  })
   
   console.log(`🎯 נבחרו ${selectedPairs.length} הזוגות הטובים ביותר לניתוח GPT מתוך ${potentialPairs.length}`)
   console.log(`📈 לאחר ניתוח GPT יוחזרו ${maxMatches} הטובות ביותר`)
   console.log(`💰 חיסכון בעלות: ${((potentialPairs.length - selectedPairs.length) / potentialPairs.length * 100).toFixed(1)}%`)
 
   // שלב 3: עיבוד הזוגות הנבחרים עם GPT
-  const allMatches = await processPairsInBatches(selectedPairs, 3, gptSettings, customPrompt) // 3 בקשות במקביל
+  const allMatches = await processPairsInBatches(selectedPairs, 3, gptSettings, customPrompt, settings) // 3 בקשות במקביל
 
   // שלב 4: מיון לפי ציון סופי והחזרת הטובות ביותר
   allMatches.sort((a, b) => b.finalScore - a.finalScore)
   
-  // **החזרת רק הטובות ביותר**
-  const topMatches = allMatches.slice(0, maxMatches)
+  // 🟦 DEBUG: כל ההתאמות שחזרו מ-GPT
+  console.log(`🎯 [DEBUG] כל ההתאמות שחזרו מ-GPT:`)
+  allMatches.forEach((match, index) => {
+    console.log(`${index + 1}. ${match.maleName} + ${match.femaleName}:`)
+    console.log(`   ציון לוגי: ${match.logicalScore}, ציון GPT: ${match.gptScore}, ציון סופי: ${match.finalScore.toFixed(1)}`)
+    console.log(`   סיכום: ${match.summary}`)
+    console.log(`   חוזקות: ${match.strengths.join(', ')}`)
+    console.log(`   חששות: ${match.concerns.join(', ')}`)
+    console.log('---')
+  })
+  
+  // **החזרת כל התוצאות מ-GPT (לא מגביל יותר)**
+  const topMatches = allMatches  // מחזיר הכל כמו שהמשתמש ביקש
+
+  // 🟦 DEBUG: ההתאמות הסופיות שנבחרו
+  console.log(`✨ [DEBUG] ההתאמות הסופיות שנבחרו (${topMatches.length}):`)
+  topMatches.forEach((match, index) => {
+    console.log(`${index + 1}. ${match.maleName} + ${match.femaleName} (ציון סופי: ${match.finalScore.toFixed(1)})`)
+  })
 
   // סיכום סופי מפורט
   console.log(`\n📈 סיכום תהליך ההתאמה החכם המשופר:`)

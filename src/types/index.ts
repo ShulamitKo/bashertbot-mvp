@@ -230,6 +230,36 @@ export interface MatchingStats {
   processingTime: number; // זמן עיבוד בשניות
 }
 
+// הגדרות שדכן מפושטות - רק מה שהשדכן בוחר במסכים
+export interface SimplifiedShadchanSettings {
+  // אסטרטגיה: פרופיל מוכן או מותאם אישית
+  selectedProfile: 'classic' | 'professional' | 'emotional' | 'custom'
+  
+  // כמות התאמות לחזור מGPT
+  maxMatches: number
+  
+  // הגדרות מותאמות אישית (רק אם selectedProfile === 'custom')
+  customSettings?: {
+    // תחומי התמקדות שהשדכן בחר
+    focusAreas: string[]
+    
+    // פער גיל מקסימלי
+    maxAgeDifference: number
+    
+    // רמת עומק הניתוח
+    analysisDepth: 'basic' | 'detailed' | 'comprehensive'
+    
+    // פילטרים קשיחים שהשדכן בחר
+    hardFilters: {
+      respectReligiousLevel: boolean
+      respectMaritalStatus: boolean
+      respectCommunityPreference: boolean
+      respectDealBreakers: boolean
+      requireSameCity: boolean
+    }
+  }
+}
+
 // הגדרות תהליך ההתאמה - בסיסי (תמיכה לאחור)
 export interface MatchingSettings {
   maxMatches: number;       // מקסימום התאמות (ברירת מחדל: 10)
@@ -238,6 +268,7 @@ export interface MatchingSettings {
     respectReligiousLevel: boolean;
     respectCommunityPreference: boolean;
     respectDealBreakers: boolean;
+    respectMaritalStatus: boolean; // אל תציע גרושים לרווקים
   };
   gptSettings: {
     model: 'gpt-4o' | 'gpt-4o-mini' | 'gpt-4';
@@ -266,6 +297,8 @@ export interface AdvancedMatchingSettings extends MatchingSettings {
     education: number;     // חשיבות רמת השכלה
     profession: number;    // חשיבות סוג מקצוע
     familyBackground: number; // חשיבות רקע משפחתי
+    personality: number;   // חשיבות אישיות וטמפרמנט
+    values: number;        // חשיבות ערכים וחזון משפחתי
   };
   
   // הגדרות מתקדמות לפילטרים קשיחים
@@ -299,6 +332,136 @@ export interface AdvancedMatchingSettings extends MatchingSettings {
   };
 }
 
+// פרופילי התאמה מוכנים
+const BUILTIN_PROFILES = {
+  classic: {
+    weights: { age: 8, location: 6, religiousLevel: 9, education: 5, profession: 4, familyBackground: 7, personality: 6, values: 9 },
+    hardFilters: { maxAgeDifference: 4, respectReligiousLevel: true, respectCommunityPreference: true, respectDealBreakers: true, respectMaritalStatus: true },
+    gptSettings: { model: 'gpt-4o-mini' as const, temperature: 0.4, maxTokens: 1000 },
+    focusAreas: ['רמה דתית והלכה', 'רקע משפחתי', 'עדות וקהילה']
+  },
+  professional: {
+    weights: { age: 6, location: 5, religiousLevel: 6, education: 9, profession: 8, familyBackground: 5, personality: 5, values: 6 },
+    hardFilters: { maxAgeDifference: 6, respectReligiousLevel: false, respectCommunityPreference: false, respectDealBreakers: true, respectMaritalStatus: false },
+    gptSettings: { model: 'gpt-4o-mini' as const, temperature: 0.5, maxTokens: 1200 },
+    focusAreas: ['השכלה ומקצוע', 'יציבות כלכלית', 'מטרות בחיים']
+  },
+  emotional: {
+    weights: { age: 4, location: 3, religiousLevel: 7, education: 5, profession: 4, familyBackground: 8, personality: 10, values: 9 },
+    hardFilters: { maxAgeDifference: 8, respectReligiousLevel: true, respectCommunityPreference: false, respectDealBreakers: true, respectMaritalStatus: true },
+    gptSettings: { model: 'gpt-4o' as const, temperature: 0.7, maxTokens: 1500 },
+    focusAreas: ['אישיות ותחביבים', 'ערכים וחזון משפחתי', 'רקע משפחתי']
+  }
+}
+
+// פונקציה להמרה מהגדרות מפושטות להגדרות מלאות
+export const expandSimplifiedSettings = (simplified: SimplifiedShadchanSettings): AdvancedMatchingSettings => {
+  // אם זה פרופיל מוכן, נשתמש בהגדרות המוכנות
+  if (simplified.selectedProfile !== 'custom') {
+    const profile = BUILTIN_PROFILES[simplified.selectedProfile]
+    return {
+      maxMatches: simplified.maxMatches,
+      weights: profile.weights,
+      hardFilters: profile.hardFilters,
+      gptSettings: profile.gptSettings,
+      customGptSettings: {
+        focusAreas: profile.focusAreas,
+        analysisDepth: 'detailed',
+        includeCompatibilityScore: true
+      },
+      advancedFilters: {
+        maxDistanceKm: 0,
+        allowedReligiousMatches: ['דתי↔דתי', 'חרדי↔חרדי', 'מסורתי↔מסורתי', 'דתי↔מסורתי'],
+        customDealBreakers: [],
+        requireSameCity: false,
+        allowDivorced: true
+      },
+      searchProfiles: [],
+      preferences: {
+        saveSearchHistory: true,
+        autoRejectPreviousMatches: true,
+        notificationSettings: {
+          urgentMatches: true,
+          weeklyReports: false
+        }
+      }
+    }
+  }
+  
+  // אם זה הגדרות מותאמות אישית
+  const custom = simplified.customSettings!
+  return {
+    maxMatches: simplified.maxMatches,
+    weights: { age: 8, location: 6, religiousLevel: 9, education: 5, profession: 4, familyBackground: 7, personality: 6, values: 9 }, // ברירת מחדל
+    hardFilters: {
+      maxAgeDifference: custom.maxAgeDifference,
+      respectReligiousLevel: custom.hardFilters.respectReligiousLevel,
+      respectCommunityPreference: custom.hardFilters.respectCommunityPreference,
+      respectDealBreakers: custom.hardFilters.respectDealBreakers,
+      respectMaritalStatus: custom.hardFilters.respectMaritalStatus
+    },
+    gptSettings: { model: 'gpt-4o-mini', temperature: 0.7, maxTokens: 1000 },
+    customGptSettings: {
+      focusAreas: custom.focusAreas,
+      analysisDepth: custom.analysisDepth,
+      includeCompatibilityScore: true
+    },
+    advancedFilters: {
+      maxDistanceKm: 0,
+      allowedReligiousMatches: ['דתי↔דתי', 'חרדי↔חרדי', 'מסורתי↔מסורתי', 'דתי↔מסורתי'],
+      customDealBreakers: [],
+      requireSameCity: custom.hardFilters.requireSameCity,
+      allowDivorced: true
+    },
+    searchProfiles: [],
+    preferences: {
+      saveSearchHistory: true,
+      autoRejectPreviousMatches: true,
+      notificationSettings: {
+        urgentMatches: true,
+        weeklyReports: false
+      }
+    }
+  }
+}
+
+// פונקציה להמרה מהגדרות מלאות להגדרות מפושטות
+export const simplifyAdvancedSettings = (advanced: AdvancedMatchingSettings): SimplifiedShadchanSettings => {
+  // נבדוק אם זה תואם לפרופיל מוכן (השוואה מדויקת של כל השדות החשובים)
+  for (const [profileKey, profile] of Object.entries(BUILTIN_PROFILES)) {
+    const focusMatch = JSON.stringify(advanced.customGptSettings.focusAreas.sort()) === JSON.stringify(profile.focusAreas.sort())
+    const ageMatch = advanced.hardFilters.maxAgeDifference === profile.hardFilters.maxAgeDifference
+    const modelMatch = advanced.gptSettings.model === profile.gptSettings.model
+    
+    if (focusMatch && ageMatch && modelMatch) {
+      console.log(`🎯 [DEBUG] זוהה פרופיל מוכן: ${profileKey}`)
+      return {
+        selectedProfile: profileKey as 'classic' | 'professional' | 'emotional',
+        maxMatches: advanced.maxMatches
+      }
+    }
+  }
+  
+  console.log('🔧 [DEBUG] זוהה כהגדרות מותאמות אישית')
+  // אחרת זה הגדרות מותאמות אישית
+  return {
+    selectedProfile: 'custom',
+    maxMatches: advanced.maxMatches,
+    customSettings: {
+      focusAreas: advanced.customGptSettings.focusAreas,
+      maxAgeDifference: advanced.hardFilters.maxAgeDifference,
+      analysisDepth: advanced.customGptSettings.analysisDepth,
+      hardFilters: {
+        respectReligiousLevel: advanced.hardFilters.respectReligiousLevel,
+        respectMaritalStatus: advanced.hardFilters.respectMaritalStatus,
+        respectCommunityPreference: advanced.hardFilters.respectCommunityPreference,
+        respectDealBreakers: advanced.hardFilters.respectDealBreakers,
+        requireSameCity: advanced.advancedFilters.requireSameCity
+      }
+    }
+  }
+}
+
 // פונקציות עזר להגדרות ברירת מחדל
 export const getDefaultAdvancedMatchingSettings = (): AdvancedMatchingSettings => ({
   // הגדרות בסיסיות (תמיכה לאחור)
@@ -308,6 +471,7 @@ export const getDefaultAdvancedMatchingSettings = (): AdvancedMatchingSettings =
     respectReligiousLevel: true,
     respectCommunityPreference: true,
     respectDealBreakers: true,
+    respectMaritalStatus: true,
   },
   gptSettings: {
     model: 'gpt-4o-mini',
@@ -323,10 +487,12 @@ export const getDefaultAdvancedMatchingSettings = (): AdvancedMatchingSettings =
     education: 5,        // השכלה בינונית
     profession: 4,       // מקצוע פחות חשוב
     familyBackground: 7, // רקע משפחתי חשוב
+    personality: 8,      // אישיות וטמפרמנט חשובים מאוד
+    values: 9,           // ערכים וחזון משפחתי קריטיים
   },
   
   advancedFilters: {
-    maxDistanceKm: 50,
+    maxDistanceKm: 0, // 0 = ללא הגבלה, רק משקל
     allowedReligiousMatches: ['דתי↔דתי', 'חרדי↔חרדי', 'מסורתי↔מסורתי', 'דתי↔מסורתי'],
     customDealBreakers: [],
     requireSameCity: false,
@@ -334,7 +500,7 @@ export const getDefaultAdvancedMatchingSettings = (): AdvancedMatchingSettings =
   },
   
   customGptSettings: {
-    focusAreas: ['תואמות רוחנית', 'יציבות משפחתית', 'חזון משותף'],
+    focusAreas: ['רמה דתית והלכה', 'רקע משפחתי', 'השכלה ומקצוע'],
     analysisDepth: 'detailed',
     includeCompatibilityScore: true,
   },

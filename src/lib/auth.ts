@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { Shadchan } from '@/types'
+import { Shadchan, AdvancedMatchingSettings } from '@/types'
 
 // התחברות עם Google OAuth
 export async function signInWithGoogle() {
@@ -161,6 +161,112 @@ export const refreshAuthToken = async (): Promise<boolean> => {
     
   } catch (error) {
     console.error('❌ שגיאה ברענון טוקן:', error)
+    return false
+  }
+}
+
+// 🟦 שמירת הגדרות מתקדמות
+export async function saveAdvancedMatchingSettings(
+  shadchanId: string, 
+  settings: AdvancedMatchingSettings
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    console.log(`💾 [DEBUG] שומר הגדרות מתקדמות עבור שדכן ${shadchanId}:`, settings)
+    
+    const { data, error } = await supabase
+      .from('shadchanim')
+      .update({
+        advanced_matching_settings: settings,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', shadchanId)
+      .select()
+      .single()
+
+    if (error) {
+      console.error('❌ שגיאה בשמירת הגדרות מתקדמות:', error)
+      throw error
+    }
+
+    console.log(`✅ [DEBUG] הגדרות מתקדמות נשמרו בהצלחה:`, data)
+    return { success: true }
+  } catch (error: any) {
+    console.error('❌ שגיאה בשמירת הגדרות מתקדמות:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+// 🟦 טעינת הגדרות מתקדמות
+export async function loadAdvancedMatchingSettings(
+  shadchanId: string
+): Promise<{ success: boolean; data?: AdvancedMatchingSettings; error?: string }> {
+  try {
+    console.log(`📁 [DEBUG] טוען הגדרות מתקדמות עבור שדכן ${shadchanId}`)
+    
+    const { data, error } = await supabase
+      .from('shadchanim')
+      .select('advanced_matching_settings')
+      .eq('id', shadchanId)
+      .single()
+
+    if (error) {
+      console.error('❌ שגיאה בטעינת הגדרות מתקדמות:', error)
+      throw error
+    }
+
+    const settings = data?.advanced_matching_settings as AdvancedMatchingSettings
+    console.log(`📋 [DEBUG] הגדרות מתקדמות נטענו:`, settings)
+    
+    return { success: true, data: settings }
+  } catch (error: any) {
+    console.error('❌ שגיאה בטעינת הגדרות מתקדמות:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+// 🟦 יצירת הגדרות ברירת מחדל עבור שדכן קיים (מיגרציה)
+export async function initializeDefaultSettings(shadchanId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    console.log(`🚀 [DEBUG] מאתחל הגדרות ברירת מחדל עבור שדכן ${shadchanId}`)
+    
+    const { getDefaultAdvancedMatchingSettings } = await import('@/types')
+    const defaultSettings = getDefaultAdvancedMatchingSettings()
+    
+    const result = await saveAdvancedMatchingSettings(shadchanId, defaultSettings)
+    
+    if (result.success) {
+      console.log(`✅ [DEBUG] הגדרות ברירת מחדל נוצרו בהצלחה עבור שדכן ${shadchanId}`)
+    }
+    
+    return result
+  } catch (error: any) {
+    console.error('❌ שגיאה ביצירת הגדרות ברירת מחדל:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+// 🟦 בדיקה אם לשדכן יש הגדרות מתקדמות
+export async function hasAdvancedSettings(shadchanId: string): Promise<boolean> {
+  try {
+    console.log(`🔍 [DEBUG] בודק אם יש הגדרות מתקדמות עבור שדכן ${shadchanId}`)
+    
+    const { data, error } = await supabase
+      .from('shadchanim')
+      .select('advanced_matching_settings')
+      .eq('id', shadchanId)
+      .single()
+
+    if (error) {
+      console.warn('⚠️ [DEBUG] שגיאה בבדיקת הגדרות:', error.message)
+      return false
+    }
+
+    const hasSettings = data?.advanced_matching_settings !== null && data?.advanced_matching_settings !== undefined
+    console.log(`📋 [DEBUG] האם יש הגדרות: ${hasSettings}`)
+    
+    return hasSettings
+  } catch (error) {
+    console.error('❌ שגיאה בבדיקת הגדרות מתקדמות:', error)
     return false
   }
 } 

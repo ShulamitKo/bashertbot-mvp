@@ -1,12 +1,12 @@
 import { supabase } from './supabase'
-import { AdvancedMatchingSettings, getDefaultAdvancedMatchingSettings } from '@/types'
+import { AdvancedMatchingSettings, getDefaultAdvancedMatchingSettings, SimplifiedShadchanSettings, simplifyAdvancedSettings } from '@/types'
 
 // ************ פונקציות ניהול הגדרות במסד הנתונים ************
 
-// טעינת הגדרות השדכן מהמסד
+// טעינת הגדרות השדכן מהמסד (עם יצירה אוטומטית אם לא קיימות)
 export const loadShadchanSettings = async (shadchanId: string): Promise<AdvancedMatchingSettings> => {
   try {
-    console.log(`🔍 טוען הגדרות עבור שדכן: ${shadchanId}`)
+    console.log(`🔍 [DEBUG] טוען הגדרות עבור שדכן: ${shadchanId}`)
     
     const { data: shadchan, error } = await supabase
       .from('shadchanim')
@@ -15,26 +15,63 @@ export const loadShadchanSettings = async (shadchanId: string): Promise<Advanced
       .single()
 
     if (error) {
-      console.warn('⚠️ שגיאה בטעינת הגדרות, משתמש בברירת מחדל:', error.message)
+      console.warn('⚠️ [DEBUG] שגיאה בטעינת הגדרות, משתמש בברירת מחדל:', error.message)
+      await initializeDefaultSettingsForShadchan(shadchanId)
       return getDefaultAdvancedMatchingSettings()
     }
 
+    console.log(`📋 [DEBUG] נתונים גולמיים מהמסד:`, shadchan)
+
     // אם יש הגדרות שמורות, החזר אותן
     if (shadchan?.advanced_matching_settings) {
-      console.log('✅ נטענו הגדרות מותאמות אישית')
-      return {
+      console.log('✅ [DEBUG] נטענו הגדרות מותאמות אישית')
+      const loadedSettings = {
         ...getDefaultAdvancedMatchingSettings(),
         ...shadchan.advanced_matching_settings
       }
+      console.log(`📝 [DEBUG] הגדרות שנטענו:`, {
+        maxMatches: loadedSettings.maxMatches,
+        model: loadedSettings.gptSettings.model,
+        temperature: loadedSettings.gptSettings.temperature,
+        maxTokens: loadedSettings.gptSettings.maxTokens,
+        focusAreas: loadedSettings.customGptSettings.focusAreas,
+        analysisDepth: loadedSettings.customGptSettings.analysisDepth,
+        weights: loadedSettings.weights
+      })
+      return loadedSettings
     }
 
-    // אחרת החזר ברירת מחדל
-    console.log('📝 משתמש בהגדרות ברירת מחדל')
-    return getDefaultAdvancedMatchingSettings()
+    // אם אין הגדרות שמורות, ניצור אותן ונחזיר ברירת מחדל
+    console.log('🚀 [DEBUG] לא נמצאו הגדרות, יוצר הגדרות ברירת מחדל...')
+    await initializeDefaultSettingsForShadchan(shadchanId)
+    
+    const defaultSettings = getDefaultAdvancedMatchingSettings()
+    console.log(`🔧 [DEBUG] הגדרות ברירת מחדל נוצרו:`, {
+      maxMatches: defaultSettings.maxMatches,
+      model: defaultSettings.gptSettings.model,
+      temperature: defaultSettings.gptSettings.temperature,
+      focusAreas: defaultSettings.customGptSettings.focusAreas
+    })
+    return defaultSettings
 
   } catch (error) {
-    console.error('❌ שגיאה בטעינת הגדרות השדכן:', error)
+    console.error('❌ [DEBUG] שגיאה בטעינת הגדרות השדכן:', error)
     return getDefaultAdvancedMatchingSettings()
+  }
+}
+
+// פונקציה פנימית ליצירת הגדרות ברירת מחדל
+const initializeDefaultSettingsForShadchan = async (shadchanId: string): Promise<void> => {
+  try {
+    console.log(`🛠️ [DEBUG] יוצר הגדרות ברירת מחדל עבור שדכן ${shadchanId}`)
+    
+    const defaultSettings = getDefaultAdvancedMatchingSettings()
+    await saveShadchanSettings(shadchanId, defaultSettings)
+    
+    console.log(`✅ [DEBUG] הגדרות ברירת מחדל נוצרו והושמרו במסד הנתונים`)
+  } catch (error) {
+    console.error('❌ [DEBUG] שגיאה ביצירת הגדרות ברירת מחדל:', error)
+    // לא נזרוק שגיאה כי אנחנו עדיין יכולים להמשיך עם הגדרות זמניות
   }
 }
 
@@ -44,7 +81,18 @@ export const saveShadchanSettings = async (
   settings: AdvancedMatchingSettings
 ): Promise<void> => {
   try {
-    console.log(`💾 שומר הגדרות עבור שדכן: ${shadchanId}`)
+    console.log(`💾 [DEBUG] שומר הגדרות עבור שדכן: ${shadchanId}`)
+    console.log(`📝 [DEBUG] הגדרות לשמירה:`, {
+      maxMatches: settings.maxMatches,
+      model: settings.gptSettings.model,
+      temperature: settings.gptSettings.temperature,
+      maxTokens: settings.gptSettings.maxTokens,
+      focusAreas: settings.customGptSettings.focusAreas,
+      analysisDepth: settings.customGptSettings.analysisDepth,
+      weights: settings.weights,
+      hardFilters: settings.hardFilters,
+      advancedFilters: settings.advancedFilters
+    })
 
     const { error } = await supabase
       .from('shadchanim')
@@ -55,13 +103,13 @@ export const saveShadchanSettings = async (
       .eq('id', shadchanId)
 
     if (error) {
-      console.error('❌ שגיאה בשמירת הגדרות:', error)
+      console.error('❌ [DEBUG] שגיאה בשמירת הגדרות:', error)
       throw error
     }
 
-    console.log('✅ הגדרות נשמרו בהצלחה')
+    console.log('✅ [DEBUG] הגדרות נשמרו בהצלחה במסד הנתונים')
   } catch (error) {
-    console.error('❌ שגיאה בשמירת הגדרות השדכן:', error)
+    console.error('❌ [DEBUG] שגיאה בשמירת הגדרות השדכן:', error)
     throw error
   }
 }
@@ -129,7 +177,7 @@ export const validateSettings = (settings: AdvancedMatchingSettings): string[] =
     errors.push('פער גיל מקסימלי חייב להיות בין 1 ל-20 שנים')
   }
 
-  if (settings.advancedFilters.maxDistanceKm < 1 || settings.advancedFilters.maxDistanceKm > 500) {
+  if (settings.advancedFilters.maxDistanceKm > 0 && (settings.advancedFilters.maxDistanceKm < 1 || settings.advancedFilters.maxDistanceKm > 500)) {
     errors.push('מרחק מקסימלי חייב להיות בין 1 ל-500 ק"מ')
   }
 
@@ -142,7 +190,9 @@ export const validateSettings = (settings: AdvancedMatchingSettings): string[] =
         religiousLevel: 'רמה דתית',
         education: 'השכלה',
         profession: 'מקצוע',
-        familyBackground: 'רקע משפחתי'
+        familyBackground: 'רקע משפחתי',
+        personality: 'אישיות וטמפרמנט',
+        values: 'ערכים וחזון משפחתי'
       }
       errors.push(`משקל ${labels[key]} חייב להיות בין 0 ל-10`)
     }
@@ -196,6 +246,87 @@ export const importSettings = (jsonString: string): AdvancedMatchingSettings => 
     return merged
   } catch (error) {
     console.error('❌ שגיאה בייבוא הגדרות:', error)
+    throw error
+  }
+}
+
+// ************ פונקציות להגדרות מפושטות ************
+
+// שמירת הגדרות מפושטות של השדכן
+export const saveSimplifiedShadchanSettings = async (
+  shadchanId: string, 
+  simplified: SimplifiedShadchanSettings
+): Promise<void> => {
+  try {
+    console.log(`💾 [DEBUG] שומר הגדרות מפושטות עבור שדכן: ${shadchanId}`)
+    console.log(`📝 [DEBUG] הגדרות מפושטות לשמירה:`, simplified)
+
+    const { error } = await supabase
+      .from('shadchanim')
+      .update({
+        advanced_matching_settings: simplified, // שמירה בטור הקיים עם נתונים נקיים
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', shadchanId)
+
+    if (error) {
+      console.error('❌ [DEBUG] שגיאה בשמירת הגדרות מפושטות:', error)
+      throw error
+    }
+
+    console.log(`✅ [DEBUG] הגדרות מפושטות נשמרו בהצלחה במסד הנתונים`)
+  } catch (error) {
+    console.error('❌ שגיאה בשמירת הגדרות מפושטות:', error)
+    throw error
+  }
+}
+
+// טעינת הגדרות מפושטות של השדכן
+export const loadSimplifiedShadchanSettings = async (shadchanId: string): Promise<SimplifiedShadchanSettings> => {
+  try {
+    console.log(`📥 [DEBUG] טוען הגדרות מפושטות עבור שדכן: ${shadchanId}`)
+    
+    const { data, error } = await supabase
+      .from('shadchanim')
+      .select('advanced_matching_settings')
+      .eq('id', shadchanId)
+      .single()
+
+    if (error) {
+      console.error('❌ [DEBUG] שגיאה בטעינת הגדרות מפושטות:', error)
+      throw error
+    }
+
+    if (data?.advanced_matching_settings) {
+      // בדיקה אם זה כבר הגדרות מפושטות (חדש) או הגדרות מלאות (ישן)
+      const settings = data.advanced_matching_settings
+      if (settings.selectedProfile !== undefined) {
+        // זה הגדרות מפושטות
+        console.log('📋 [DEBUG] הגדרות מפושטות נטענו מהמסד:', settings)
+        return settings
+      } else {
+        // זה הגדרות מלאות ישנות - נמיר להגדרות מפושטות
+        console.log('🔄 [DEBUG] מגלה הגדרות ישנות, ממיר להגדרות מפושטות')
+        const simplified = simplifyAdvancedSettings(settings)
+        // נשמור את ההגדרות המפושטות
+        await saveSimplifiedShadchanSettings(shadchanId, simplified)
+        return simplified
+      }
+    }
+
+    // אם אין הגדרות מפושטות, נחזיר ברירת מחדל
+    console.log('⚙️ [DEBUG] לא נמצאו הגדרות מפושטות, יוצר ברירת מחדל')
+    const defaultSimplified: SimplifiedShadchanSettings = {
+      selectedProfile: 'classic',
+      maxMatches: 10
+    }
+    
+    // נשמור את ברירת המחדל
+    await saveSimplifiedShadchanSettings(shadchanId, defaultSimplified)
+    
+    return defaultSimplified
+  } catch (error) {
+    console.error('❌ שגיאה בטעינת הגדרות מפושטות:', error)
     throw error
   }
 }
