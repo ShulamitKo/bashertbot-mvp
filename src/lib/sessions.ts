@@ -473,6 +473,20 @@ export const deleteSession = async (sessionId: string) => {
       throw new Error('הסשן לא נמצא או שאינך מורשה למחוק אותו')
     }
 
+    // שלב 1: ניתוק ההצעות מהסשן (להפוך את original_session_id ל-NULL)
+    // זה יאפשר להם להישאר פעילות גם לאחר מחיקת הסשן
+    const { error: disconnectError } = await supabase
+      .from('match_proposals')
+      .update({ original_session_id: null })
+      .eq('original_session_id', sessionId)
+      .eq('shadchan_id', shadchan.id)
+
+    if (disconnectError) {
+      console.error('❌ שגיאה בניתוק הצעות מהסשן:', disconnectError)
+      throw new Error(`שגיאה בניתוק הצעות: ${disconnectError.message}`)
+    }
+
+    // שלב 2: מחיקת הסשן עצמו
     const { error } = await supabase
       .from('matching_sessions')
       .delete()
@@ -482,6 +496,8 @@ export const deleteSession = async (sessionId: string) => {
     if (error) {
       throw error
     }
+    
+    console.log(`✅ סשן ${sessionId} נמחק בהצלחה (ההצעות הפעילות נשארו)`)
     
   } catch (error) {
     console.error('❌ שגיאה במחיקת סשן:', error)

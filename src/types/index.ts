@@ -65,7 +65,7 @@ export interface MatchProposal {
   ai_reasoning?: string;
   
   // מצב וניהול - זרימה מתקדמת חדשה
-  status: 'pending' | 'ready_for_processing' | 'rejected' | 'in_meeting_process' | 'ready_for_contact' | 'contacting' | 'awaiting_response' | 'rejected_by_candidate' | 'schedule_meeting' | 'meeting_scheduled' | 'meeting_completed' | 'completed' | 'closed';
+  status: 'pending' | 'ready_for_processing' | 'rejected' | 'in_meeting_process' | 'ready_for_contact' | 'contacting' | 'awaiting_response' | 'rejected_by_candidate' | 'schedule_meeting' | 'meeting_scheduled' | 'meeting_completed' | 'completed' | 'closed' | 'restored_to_active';
   notes?: string;
   contact_attempts?: number;
   last_contact_date?: string;

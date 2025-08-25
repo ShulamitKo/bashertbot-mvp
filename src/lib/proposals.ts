@@ -295,7 +295,7 @@ export const loadEnhancedProposals = async (accessToken: string): Promise<Enhanc
       .from('match_proposals')
       .select('*, notes_history')
       .eq('shadchan_id', shadchan.id)
-              .in('status', ['ready_for_processing', 'ready_for_contact', 'contacting', 'awaiting_response', 'schedule_meeting', 'meeting_scheduled', 'meeting_completed', 'completed', 'rejected_by_candidate', 'closed', 'in_meeting_process']) // עדכון רשימת הסטטוסים הפעילים (לא כולל pending)
+              .in('status', ['ready_for_processing', 'restored_to_active', 'ready_for_contact', 'contacting', 'awaiting_response', 'schedule_meeting', 'meeting_scheduled', 'meeting_completed', 'completed', 'rejected_by_candidate', 'closed', 'in_meeting_process']) // עדכון רשימת הסטטוסים הפעילים (לא כולל pending)
       .order('updated_at', { ascending: false })
 
     if (error) {
@@ -692,7 +692,7 @@ export const contactCandidate = async (
       .eq('id', proposalId)
       .single()
 
-    if (currentStatus && (currentStatus.status === 'ready_for_processing' || currentStatus.status === 'ready_for_contact')) {
+    if (currentStatus && (currentStatus.status === 'ready_for_processing' || currentStatus.status === 'restored_to_active' || currentStatus.status === 'ready_for_contact')) {
       updateData.status = 'contacting'
     }
 
@@ -760,7 +760,7 @@ export const updateCandidateResponse = async (
     const otherSide = side === 'boy' ? 'girl' : 'boy'
     const otherResponse = proposal[`${otherSide}_response` as keyof typeof proposal]
 
-    // עדכון סטטוס לפי התגובות - אל תשנה סטטוס כשמועמד לא מעוניין
+    // עדכון סטטוס לפי התגובות
     if (response === 'interested' && otherResponse === 'interested') {
       // שני הצדדים מעוניינים - מעבר לשלב קביעת פגישה
       updateData.status = 'schedule_meeting'
@@ -770,6 +770,14 @@ export const updateCandidateResponse = async (
     } else if (response === 'needs_time') {
       // צריך זמן - נשאר בהמתנה
       updateData.status = 'awaiting_response'
+    } else if (response === 'not_interested') {
+      // לא מעוניין - ממתינים לתגובת הצד השני
+      updateData.status = 'awaiting_response'
+    }
+    
+    // אם שני הצדדים לא מעוניינים - סגירת ההצעה
+    if (response === 'not_interested' && otherResponse === 'not_interested') {
+      updateData.status = 'rejected_by_candidate'
     }
 
     // הוספת הערה אוטומטית על השינוי - עם שמות שהועברו או מזהים כגיבוי
@@ -784,7 +792,11 @@ export const updateCandidateResponse = async (
                           response === 'not_interested' ? 'לא מעוניין' : 'צריך זמן'
       
       if (response === 'not_interested') {
-        autoNote = `${finalBoyName} ענה: ${responseText}${rejectionReason ? ` (סיבה: ${rejectionReason})` : ''}. יש לעדכן את ${finalGirlName} ולסגור את ההצעה.`
+        if (otherResponse === 'not_interested') {
+          autoNote = `${finalBoyName} ענה: ${responseText}${rejectionReason ? ` (סיבה: ${rejectionReason})` : ''}. שני הצדדים לא מעוניינים - ההצעה נסגרת.`
+        } else {
+          autoNote = `${finalBoyName} ענה: ${responseText}${rejectionReason ? ` (סיבה: ${rejectionReason})` : ''}. ממתינים לתגובת ${finalGirlName}.`
+        }
       } else if (response === 'interested' && otherResponse === 'interested') {
         autoNote = `${finalBoyName} ענה: ${responseText} - שני הצדדים מעוניינים! יש לקבוע פגישה`
       } else if (response === 'interested') {
@@ -797,7 +809,11 @@ export const updateCandidateResponse = async (
                           response === 'not_interested' ? 'לא מעוניינת' : 'צריכה זמן'
       
       if (response === 'not_interested') {
-        autoNote = `${finalGirlName} ענתה: ${responseText}${rejectionReason ? ` (סיבה: ${rejectionReason})` : ''}. יש לעדכן את ${finalBoyName} ולסגור את ההצעה.`
+        if (otherResponse === 'not_interested') {
+          autoNote = `${finalGirlName} ענתה: ${responseText}${rejectionReason ? ` (סיבה: ${rejectionReason})` : ''}. שני הצדדים לא מעוניינים - ההצעה נסגרת.`
+        } else {
+          autoNote = `${finalGirlName} ענתה: ${responseText}${rejectionReason ? ` (סיבה: ${rejectionReason})` : ''}. ממתינים לתגובת ${finalBoyName}.`
+        }
       } else if (response === 'interested' && otherResponse === 'interested') {
         autoNote = `${finalGirlName} ענתה: ${responseText} - שני הצדדים מעוניינים! יש לקבוע פגישה`
       } else if (response === 'interested') {
@@ -907,7 +923,7 @@ export const restoreProposalToActive = async (
       {
         content: restoreNote,
         created_at: new Date().toISOString(),
-        status: 'ready_for_processing'
+        status: 'restored_to_active'
       }
     ]
 
@@ -915,7 +931,7 @@ export const restoreProposalToActive = async (
     const { error: updateError } = await supabase
       .from('match_proposals')
       .update({
-        status: 'ready_for_processing',
+        status: 'restored_to_active',
         updated_at: new Date().toISOString(),
         notes: restoreNote,
         notes_history: updatedNotesHistory,

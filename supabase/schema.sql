@@ -63,7 +63,7 @@ CREATE TABLE match_proposals (
     strengths TEXT, -- נקודות חוזק (JSON array)
     concerns TEXT, -- נקודות לתשומת לב (JSON array)
     
-    status TEXT DEFAULT 'ready_for_processing' CHECK (status IN ('ready_for_processing', 'rejected', 'in_meeting_process', 'ready_for_contact', 'contacting', 'awaiting_response', 'rejected_by_candidate', 'schedule_meeting', 'meeting_scheduled', 'meeting_completed', 'completed', 'closed')),
+    status TEXT DEFAULT 'ready_for_processing' CHECK (status IN ('ready_for_processing', 'rejected', 'in_meeting_process', 'ready_for_contact', 'contacting', 'awaiting_response', 'rejected_by_candidate', 'schedule_meeting', 'meeting_scheduled', 'meeting_completed', 'completed', 'closed', 'restored_to_active')),
     
     -- חיבור לסשן מקורי
     original_session_id UUID REFERENCES matching_sessions(id),
@@ -99,7 +99,7 @@ DROP CONSTRAINT IF EXISTS match_proposals_status_check;
 
 ALTER TABLE match_proposals 
 ADD CONSTRAINT match_proposals_status_check 
-CHECK (status IN ('ready_for_processing', 'rejected', 'in_meeting_process', 'ready_for_contact', 'contacting', 'awaiting_response', 'rejected_by_candidate', 'schedule_meeting', 'meeting_scheduled', 'meeting_completed', 'completed', 'closed'));
+CHECK (status IN ('ready_for_processing', 'rejected', 'in_meeting_process', 'ready_for_contact', 'contacting', 'awaiting_response', 'rejected_by_candidate', 'schedule_meeting', 'meeting_scheduled', 'meeting_completed', 'completed', 'closed', 'restored_to_active'));
 
 -- טבלת דחיות (למניעת הצעות חוזרות)
 CREATE TABLE rejections (

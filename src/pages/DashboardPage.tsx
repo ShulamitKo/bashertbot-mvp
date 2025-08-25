@@ -73,7 +73,7 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
     try {
       // רק הסטטוסים הרלוונטיים שמופיעים בטאבים שלנו
       const relevantStatuses = [
-        'ready_for_processing', 
+        'ready_for_processing', 'restored_to_active',
         'ready_for_contact', 'contacting', 'awaiting_response',
         'schedule_meeting', 'meeting_scheduled', 'in_meeting_process',
         'meeting_completed', 'completed'
@@ -1037,7 +1037,7 @@ const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newS
         const { data: currentProposals } = await supabase
           .from('match_proposals')
           .select('id')
-          .in('status', ['ready_for_processing', 'ready_for_contact', 'contacting', 'awaiting_response', 'schedule_meeting', 'meeting_scheduled', 'in_meeting_process', 'meeting_completed', 'completed'])
+          .in('status', ['ready_for_processing', 'restored_to_active', 'ready_for_contact', 'contacting', 'awaiting_response', 'schedule_meeting', 'meeting_scheduled', 'in_meeting_process', 'meeting_completed', 'completed'])
         
         const count = currentProposals?.length || 0
         if (onProposalCountChange) {
@@ -1055,7 +1055,7 @@ const statusTabs = [
   { 
     id: 'new', 
     label: 'חדשות להתחלה', 
-    statuses: ['ready_for_processing'],
+    statuses: ['ready_for_processing', 'restored_to_active'],
     color: 'yellow' as const,
     icon: '🆕'
   },
@@ -1088,6 +1088,7 @@ const ProposalListRow = ({ proposal, onClick }: { proposal: EnhancedProposal, on
     const colors = {
       pending: 'bg-blue-100 text-blue-800',
       ready_for_processing: 'bg-yellow-100 text-yellow-800',
+      restored_to_active: 'bg-green-100 text-green-800',
       rejected: 'bg-red-100 text-red-800',
       ready_for_contact: 'bg-purple-100 text-purple-800',
       contacting: 'bg-blue-100 text-blue-800',
@@ -1107,6 +1108,7 @@ const ProposalListRow = ({ proposal, onClick }: { proposal: EnhancedProposal, on
     const texts = {
       pending: 'ממתין לאישור',
       ready_for_processing: 'ממתינה לתחילת טיפול',
+      restored_to_active: 'הוחזרה לטיפול',
       rejected: 'נדחתה',
       ready_for_contact: 'מוכן ליצירת קשר',
       contacting: 'יוצר קשר',
@@ -1205,6 +1207,7 @@ const ProposalGridCard = ({ proposal, onClick }: { proposal: EnhancedProposal, o
     const colors = {
       pending: 'bg-blue-100 text-blue-800',
       ready_for_processing: 'bg-yellow-100 text-yellow-800',
+      restored_to_active: 'bg-green-100 text-green-800',
       rejected: 'bg-red-100 text-red-800',
       ready_for_contact: 'bg-purple-100 text-purple-800',
       contacting: 'bg-blue-100 text-blue-800',
@@ -1224,6 +1227,7 @@ const ProposalGridCard = ({ proposal, onClick }: { proposal: EnhancedProposal, o
     const texts = {
       pending: 'ממתין לאישור',
       ready_for_processing: 'ממתינה לתחילת טיפול',
+      restored_to_active: 'הוחזרה לטיפול',
       rejected: 'נדחתה',
       ready_for_contact: 'מוכן ליצירת קשר',
       contacting: 'יוצר קשר',
@@ -1340,7 +1344,7 @@ const ProposalsTab = ({ accessToken, onCountChange, onUrgentCountChange, shadcha
   const [selectedProposalForEdit, setSelectedProposalForEdit] = useState<EnhancedProposal | null>(null) // הצעה שנבחרה לעריכה מהרשת
   const [isInEditMode, setIsInEditMode] = useState(false) // האם אנחנו במצב עריכת הצעה
   const [filter, setFilter] = useState<ProposalsFilter>({
-    status: ['ready_for_processing', 'ready_for_contact', 'contacting', 'awaiting_response', 'schedule_meeting', 'meeting_scheduled', 'meeting_completed', 'completed', 'in_meeting_process'], // רק הסטטוסים הרלוונטיים (ללא rejected_by_candidate, closed)
+    status: ['ready_for_processing', 'restored_to_active', 'ready_for_contact', 'contacting', 'awaiting_response', 'schedule_meeting', 'meeting_scheduled', 'meeting_completed', 'completed', 'in_meeting_process'], // רק הסטטוסים הרלוונטיים (ללא rejected_by_candidate, closed)
     sortBy: 'created_at',
     sortOrder: 'desc'
   })
@@ -1892,6 +1896,8 @@ const HistoryTab = ({ accessToken }: { accessToken: string | null }) => {
   const [loading, setLoading] = useState(true)
   const [selectedSession, setSelectedSession] = useState<MatchingSession | null>(null)
   const [deletingSession, setDeletingSession] = useState<string | null>(null)
+  const [showDeleteSessionModal, setShowDeleteSessionModal] = useState(false)
+  const [sessionToDelete, setSessionToDelete] = useState<string | null>(null)
 
   useEffect(() => {
     loadHistorySessions()
@@ -1910,14 +1916,17 @@ const HistoryTab = ({ accessToken }: { accessToken: string | null }) => {
 
   const handleDeleteSession = async (sessionId: string, event: React.MouseEvent) => {
     event.stopPropagation() // מניעת פתיחת הסשן
-    
-    if (!window.confirm('האם אתה בטוח שברצונך למחוק את הסשן? פעולה זו בלתי הפיכה.')) {
-      return
-    }
+    setSessionToDelete(sessionId)
+    setShowDeleteSessionModal(true)
+  }
 
-    setDeletingSession(sessionId)
+  const confirmDeleteSession = async () => {
+    if (!sessionToDelete) return
+    
+    setShowDeleteSessionModal(false)
+    setDeletingSession(sessionToDelete)
     try {
-      await deleteSession(sessionId)
+      await deleteSession(sessionToDelete)
       console.log('סשן נמחק בהצלחה, מרענן רשימה...')
       // רענון רשימת הסשנים
       await loadHistorySessions()
@@ -1937,6 +1946,7 @@ const HistoryTab = ({ accessToken }: { accessToken: string | null }) => {
       alert(`שגיאה במחיקת הסשן: ${error.message || 'שגיאה לא ידועה'}`)
     } finally {
       setDeletingSession(null)
+      setSessionToDelete(null)
     }
   }
 
@@ -2154,6 +2164,66 @@ const HistoryTab = ({ accessToken }: { accessToken: string | null }) => {
           })}
         </div>
       )}
+
+      {/* מודל מחיקת סשן */}
+      {showDeleteSessionModal && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+          onClick={() => setShowDeleteSessionModal(false)}
+        >
+          <div 
+            className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-center">
+              {/* אייקון */}
+              <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100 mb-4">
+                <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </div>
+              
+              {/* כותרת */}
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                מחיקת סשן 🗑️
+              </h3>
+              
+              {/* תוכן */}
+              <div className="mb-6">
+                <p className="text-gray-600 mb-3">
+                  האם אתה בטוח שברצונך למחוק את הסשן הזה?
+                </p>
+                <div className="bg-red-50 rounded-lg p-3 mb-3">
+                  <p className="text-sm text-red-800">
+                    <strong>אזהרה:</strong> פעולה זו בלתי הפיכה!
+                  </p>
+                </div>
+                <p className="text-sm text-gray-500">
+                  כל ההתאמות והנתונים בסשן זה יימחקו לצמיתות ולא ניתן יהיה לשחזר אותם.
+                </p>
+              </div>
+              
+              {/* כפתורים */}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowDeleteSessionModal(false)}
+                  className="flex-1 px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  disabled={deletingSession !== null}
+                >
+                  ביטול
+                </button>
+                <button
+                  onClick={confirmDeleteSession}
+                  className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors font-medium"
+                  disabled={deletingSession !== null}
+                >
+                  {deletingSession ? 'מוחק...' : 'מחק סשן 🗑️'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -2362,130 +2432,39 @@ const ImportTab: React.FC<{ accessToken: string | null }> = ({ accessToken }) =>
 
 
 // רכיב להצגת הצעת התאמה משופרת
-const MatchCard = ({ match, onStatusUpdate, accessToken }: { 
+const MatchCard = ({ match, onStatusUpdate }: { 
   match: MatchProposal, 
   onStatusUpdate?: (matchId: string, newStatus: 'ready_for_processing' | 'rejected') => void,
   accessToken: string | null
-}) => {
-  const [showProfilesModal, setShowProfilesModal] = useState(false)
-  const [candidatesData, setCandidatesData] = useState<{
-    maleProfile: any | null
-    femaleProfile: any | null
-  }>({ maleProfile: null, femaleProfile: null })
+  }) => {
+    const [showProfilesModal, setShowProfilesModal] = useState(false)
+    const [candidatesData, setCandidatesData] = useState<{
+      maleProfile: any | null
+      femaleProfile: any | null
+    }>({ maleProfile: null, femaleProfile: null })
   const [isProcessing, setIsProcessing] = useState(false)
+  const [showApprovalModal, setShowApprovalModal] = useState(false)
+  const [showRejectionModal, setShowRejectionModal] = useState(false)
 
-  // טעינת נתוני המועמדים המלאים
-  const loadCandidateProfiles = async () => {
-    try {
-      console.log('🔍 טוען נתוני מועמדים מהגיליון בזמן אמת...')
-      
-      if (!accessToken) {
-        console.error('❌ אין access token זמין')
+    // הצגת פרופילים מיידית - ללא טעינה מחדש
+  const showProfiles = () => {
+    // שימוש מיידי בנתונים הקיימים
         setCandidatesData({
           maleProfile: match.boy_data || null,
           femaleProfile: match.girl_data || null
         })
         setShowProfilesModal(true)
-        return
-      }
-
-      // קבלת מזהה הגיליון
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        console.error('❌ משתמש לא מחובר')
-        return
-      }
-
-      const { data: shadchan } = await supabase
-        .from('shadchanim')
-        .select('google_sheet_id')
-        .eq('auth_user_id', user.id)
-        .single()
-
-      let sheetId = shadchan?.google_sheet_id
-      if (!sheetId) {
-        sheetId = localStorage.getItem('sheetId')
-      }
-
-      if (!sheetId) {
-        console.error('❌ לא נמצא מזהה גיליון')
-        // שימוש בנתונים הישנים
-        setCandidatesData({
-          maleProfile: match.boy_data || null,
-          femaleProfile: match.girl_data || null
-        })
-        setShowProfilesModal(true)
-        return
-      }
-
-      // טעינת נתונים מהגיליון
-      const { loadCandidatesFromSheet } = await import('@/lib/google-sheets')
-      const candidatesData = await loadCandidatesFromSheet(accessToken, sheetId)
-      
-             // חיפוש המועמדים הספציפיים
-       const boyDetails = candidatesData.males.find(m => m.id === match.boy_row_id)
-       const girlDetails = candidatesData.females.find(f => f.id === match.girl_row_id)
-
-      console.log('✅ נתונים מהגיליון נטענו:', {
-        boyFound: !!boyDetails,
-        girlFound: !!girlDetails,
-        boyName: boyDetails?.name || 'לא נמצא',
-        girlName: girlDetails?.name || 'לא נמצא'
-      })
-
-      // השוואה בין נתונים ישנים לחדשים
-      if (boyDetails && match.boy_data) {
-        console.log('🔄 השוואת נתוני בן:', {
-          'שם (ישן)': match.boy_data.name,
-          'שם (חדש)': boyDetails.name,
-          'מייל (ישן)': match.boy_data.email || 'ריק',
-          'מייל (חדש)': boyDetails.email || 'ריק',
-          'טלפון (ישן)': match.boy_data.phone || 'ריק',
-          'טלפון (חדש)': boyDetails.phone || 'ריק'
-        })
-      }
-
-      if (girlDetails && match.girl_data) {
-        console.log('🔄 השוואת נתוני בת:', {
-          'שם (ישן)': match.girl_data.name,
-          'שם (חדש)': girlDetails.name,
-          'מייל (ישן)': match.girl_data.email || 'ריק',
-          'מייל (חדש)': girlDetails.email || 'ריק',
-          'טלפון (ישן)': match.girl_data.phone || 'ריק',
-          'טלפון (חדש)': girlDetails.phone || 'ריק'
-        })
-      }
-
-      // שימוש בנתונים המעודכנים מהגיליון, או נתונים ישנים כגיבוי
-      setCandidatesData({
-        maleProfile: boyDetails || match.boy_data || null,
-        femaleProfile: girlDetails || match.girl_data || null
-      })
-      
-      setShowProfilesModal(true)
-    } catch (error) {
-      console.error('שגיאה בטעינת פרופילי המועמדים:', error)
-      
-      // במקרה של שגיאה - שימוש בנתונים הישנים
-      console.log('🔄 משתמש בנתונים הישנים כגיבוי')
-      setCandidatesData({
-        maleProfile: match.boy_data || null,
-        femaleProfile: match.girl_data || null
-      })
-      
-      setShowProfilesModal(true)
-    }
   }
 
   // טיפול באישור הצעה
   const handleApprove = async () => {
     if (isProcessing) return
-    
-    const confirmApprove = window.confirm(
-      `האם אתה בטוח שברצונך לאשר את ההצעה בין ${match.maleName} ו-${match.femaleName}?\n\nלאחר האישור, ההצעה תועבר לטאב "הצעות פעילות" למעקב.`
-    )
-    
-    if (!confirmApprove) return
+    setShowApprovalModal(true)
+  }
+
+  // אישור הצעה אחרי הסכמה במודל
+  const confirmApprove = async () => {
+    setShowApprovalModal(false)
     
     setIsProcessing(true)
     try {
@@ -2555,12 +2534,12 @@ const MatchCard = ({ match, onStatusUpdate, accessToken }: {
   // טיפול בדחיית הצעה
   const handleReject = async () => {
     if (isProcessing) return
-    
-    const confirmReject = window.confirm(
-      `האם אתה בטוח שברצונך לדחות את ההצעה בין ${match.maleName} ו-${match.femaleName}?\n\nהסיבה לדחיה תירשם ותועזור לשפר התאמות עתידיות.`
-    )
-    
-    if (!confirmReject) return
+    setShowRejectionModal(true)
+  }
+
+  // דחיית הצעה אחרי הסכמה במודל
+  const confirmReject = async () => {
+    setShowRejectionModal(false)
     
     setIsProcessing(true)
     try {
@@ -2627,16 +2606,18 @@ const MatchCard = ({ match, onStatusUpdate, accessToken }: {
             </span>
           </div>
         </div>
-        <div className="text-left">
-          <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-            match.status === 'ready_for_processing' ? 'bg-yellow-100 text-yellow-800' :
-            match.status === 'rejected' ? 'bg-red-100 text-red-800' :
-            'bg-gray-100 text-gray-800' // סטטוס ברירת מחדל
-          }`}>
-            {match.status === 'ready_for_processing' ? 'ממתינה לתחילת טיפול' :
-                                     match.status === 'rejected' ? 'נדחתה' : 'התאמה חדשה'} {/* עדכון טקסט תצוגה */}
-          </span>
-        </div>
+                  <div className="text-left">
+           <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+             match.status === 'ready_for_processing' ? 'bg-yellow-100 text-yellow-800' :
+             match.status === 'restored_to_active' ? 'bg-green-100 text-green-800' :
+             match.status === 'rejected' ? 'bg-red-100 text-red-800' :
+             'bg-gray-100 text-gray-800' // סטטוס ברירת מחדל
+           }`}>
+             {match.status === 'ready_for_processing' ? 'ממתינה לתחילת טיפול' :
+              match.status === 'restored_to_active' ? 'הוחזרה לטיפול' :
+              match.status === 'rejected' ? 'נדחתה' : 'התאמה חדשה'} {/* עדכון טקסט תצוגה */}
+           </span>
+          </div>
       </div>
       
       <div className="mb-3">
@@ -2676,7 +2657,7 @@ const MatchCard = ({ match, onStatusUpdate, accessToken }: {
           <Button 
             size="sm" 
             variant="outline" 
-            onClick={loadCandidateProfiles}
+            onClick={showProfiles}
             className="border-blue-500 text-blue-600 hover:bg-blue-50"
             disabled={isProcessing}
           >
@@ -2705,11 +2686,17 @@ const MatchCard = ({ match, onStatusUpdate, accessToken }: {
             </>
           )}
           
-          {match.status === 'ready_for_processing' && (
-            <span className="text-sm text-green-600 font-medium px-3 py-2 bg-green-50 rounded">
-              ✅ ממתינה לתחילת טיפול - מועברת להצעות פעילות
-            </span>
-          )}
+                     {match.status === 'ready_for_processing' && (
+             <span className="text-sm text-green-600 font-medium px-3 py-2 bg-green-50 rounded">
+               ✅ ממתינה לתחילת טיפול - מועברת להצעות פעילות
+             </span>
+           )}
+           
+           {match.status === 'restored_to_active' && (
+             <span className="text-sm text-green-600 font-medium px-3 py-2 bg-green-50 rounded">
+               ✅ הוחזרה לטיפול - מועברת להצעות פעילות
+             </span>
+           )}
           
           {match.status === 'rejected' && (
             <span className="text-sm text-red-600 font-medium px-3 py-2 bg-red-50 rounded">
@@ -2726,6 +2713,126 @@ const MatchCard = ({ match, onStatusUpdate, accessToken }: {
           femaleProfile={candidatesData.femaleProfile}
           onClose={() => setShowProfilesModal(false)}
         />
+      )}
+
+      {/* מודל אישור הצעה */}
+      {showApprovalModal && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+          onClick={() => setShowApprovalModal(false)}
+        >
+          <div 
+            className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-center">
+              {/* אייקון */}
+              <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100 mb-4">
+                <svg className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              
+              {/* כותרת */}
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                אישור הצעת שידוך 💕
+              </h3>
+              
+              {/* תוכן */}
+              <div className="mb-6">
+                <p className="text-gray-600 mb-3">
+                  האם אתה בטוח שברצונך לאשר את ההצעה בין:
+                </p>
+                <div className="bg-blue-50 rounded-lg p-3 mb-3">
+                  <p className="font-medium text-blue-900">
+                    {match.maleName} ↔ {match.femaleName}
+                  </p>
+                </div>
+                <p className="text-sm text-gray-500">
+                  לאחר האישור, ההצעה תועבר לטאב "הצעות פעילות" למעקב ואתה תוכל להתחיל בתהליך יצירת הקשר.
+                </p>
+              </div>
+              
+              {/* כפתורים */}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowApprovalModal(false)}
+                  className="flex-1 px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  disabled={isProcessing}
+                >
+                  ביטול
+                </button>
+                <button
+                  onClick={confirmApprove}
+                  className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-medium"
+                  disabled={isProcessing}
+                >
+                  {isProcessing ? 'מאשר...' : 'אשר הצעה ✓'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* מודל דחיית הצעה */}
+      {showRejectionModal && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+          onClick={() => setShowRejectionModal(false)}
+        >
+          <div 
+            className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-center">
+              {/* אייקון */}
+              <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100 mb-4">
+                <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </div>
+              
+              {/* כותרת */}
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                דחיית הצעת שידוך ❌
+              </h3>
+              
+              {/* תוכן */}
+              <div className="mb-6">
+                <p className="text-gray-600 mb-3">
+                  האם אתה בטוח שברצונך לדחות את ההצעה בין:
+                </p>
+                <div className="bg-red-50 rounded-lg p-3 mb-3">
+                  <p className="font-medium text-red-900">
+                    {match.maleName} ↔ {match.femaleName}
+                  </p>
+                </div>
+                <p className="text-sm text-gray-500">
+                  הסיבה לדחיה תירשם ותועזור לשיפור התאמות עתידיות. ההצעה תסווג כנדחית ולא תוצג שוב.
+                </p>
+              </div>
+              
+              {/* כפתורים */}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowRejectionModal(false)}
+                  className="flex-1 px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  disabled={isProcessing}
+                >
+                  ביטול
+                </button>
+                <button
+                  onClick={confirmReject}
+                  className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors font-medium"
+                  disabled={isProcessing}
+                >
+                  {isProcessing ? 'דוחה...' : 'דחה הצעה ❌'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </>
   )
@@ -2969,13 +3076,19 @@ const ProfilesModal = ({
   }
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-y-auto">
+    <div 
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center">
           <h2 className="text-2xl font-bold text-gray-800">פרופילי המועמדים</h2>
           <button
             onClick={onClose}
-            className="text-gray-500 hover:text-gray-700 text-2xl font-bold"
+            className="text-gray-500 hover:text-gray-700 text-2xl font-bold hover:bg-gray-100 rounded-full p-1 transition-colors"
           >
             ×
           </button>
@@ -3192,8 +3305,14 @@ const ProposalsHistoryTab = ({ accessToken, loadActiveProposalsCount }: { access
       
       {/* מודל תצוגה מפורטת */}
       {selectedProposal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+          onClick={() => setSelectedProposal(null)}
+        >
+          <div 
+            className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between p-6 border-b border-gray-200">
               <h2 className="text-xl font-bold text-gray-900">
                 פרטי הצעה #{selectedProposal.id.slice(-8)}
@@ -3231,6 +3350,28 @@ const ReadOnlyProposalView = ({ proposal }: { proposal: EnhancedProposal }) => {
       hour: '2-digit',
       minute: '2-digit'
     })
+  }
+
+  // פונקציית תרגום סטטוסים לעברית
+  const translateStatus = (status: string): string => {
+    const statusTranslations: { [key: string]: string } = {
+      'pending': 'ממתין',
+      'ready_for_processing': 'מוכן לעיבוד',
+      'rejected': 'נדחה',
+      'ready_for_contact': 'מוכן ליצירת קשר',
+      'contacting': 'יוצר קשר',
+      'awaiting_response': 'ממתין לתגובה',
+      'rejected_by_candidate': 'נדחתה על ידי מועמד',
+      'schedule_meeting': 'לקבוע פגישה',
+      'meeting_scheduled': 'פגישה קבועה',
+      'in_meeting_process': 'בתהליך פגישות',
+      'meeting_completed': 'פגישה הושלמה',
+      'completed': 'הושלם',
+      'closed': 'נסגרה',
+      'restored_to_active': 'הוחזרה לטיפול'
+    }
+    
+    return statusTranslations[status] || status
   }
 
   const boyData = proposal.boyDetails || proposal.boy_data
@@ -3329,7 +3470,7 @@ const ReadOnlyProposalView = ({ proposal }: { proposal: EnhancedProposal }) => {
                     </span>
                     {note.status && (
                       <span className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded-full">
-                        סטטוס: {note.status}
+                        סטטוס: {translateStatus(note.status)}
                       </span>
                     )}
                   </div>
