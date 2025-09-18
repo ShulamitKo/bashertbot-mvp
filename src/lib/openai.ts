@@ -21,7 +21,31 @@ interface GPTMatchResponse {
   concerns?: string[]
 }
 
-// הפונקציה הוסרה - משתמשים בזו המשותפת מ-prompt-generator.ts
+// פונקציה כללית להפעלת GPT
+export const generateCompletion = async (
+  prompt: string,
+  options: {
+    model?: string;
+    temperature?: number;
+    max_tokens?: number;
+  } = {}
+): Promise<string> => {
+  const { model = 'gpt-4o-mini', temperature = 0.7, max_tokens = 1000 } = options;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model,
+      temperature,
+      max_tokens,
+      messages: [{ role: 'user', content: prompt }]
+    });
+
+    return completion.choices[0]?.message?.content || '';
+  } catch (error) {
+    console.error('שגיאה ב-GPT:', error);
+    throw new Error(`שגיאה ב-GPT: ${error}`);
+  }
+}
 
 // פונקציה לפנייה ל-GPT לזוג בודד
 const analyzeMatchWithGPT = async (

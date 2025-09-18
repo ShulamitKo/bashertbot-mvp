@@ -29,6 +29,8 @@ import { loadEnhancedProposals, loadFailedProposals, restoreProposalToActive, ge
 import { EnhancedProposal, ProposalsFilter } from '@/types'
 import { ProposalCard } from '@/components/ui/ProposalCard'
 import { ProposalBadges, UrgencyIndicator } from '@/components/ui/ProposalBadges'
+import { CandidatesList } from '@/components/CandidatesList'
+import { SmartImport } from '@/components/SmartImport'
 
 interface DashboardPageProps {
   user?: {
@@ -37,7 +39,7 @@ interface DashboardPageProps {
   }
 }
 
-type TabType = 'matches' | 'proposals' | 'import' | 'settings' | 'history' | 'proposals-history'
+type TabType = 'matches' | 'proposals' | 'import' | 'settings' | 'history' | 'proposals-history' | 'boys' | 'girls'
 
 export const DashboardPage = ({ user }: DashboardPageProps) => {
   const [activeTab, setActiveTab] = useState<TabType>('matches')
@@ -257,6 +259,8 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
   const tabs = [
     { id: 'matches' as TabType, label: 'התאמות חדשות', icon: Heart, count: 0 },
     { id: 'proposals' as TabType, label: 'הצעות פעילות', icon: Users, count: activeProposalsCount },
+    { id: 'boys' as TabType, label: 'בנים', icon: User, count: 0 },
+    { id: 'girls' as TabType, label: 'בנות', icon: User, count: 0 },
     { id: 'import' as TabType, label: 'ייבוא מועמדים', icon: Upload, count: 0 },
     { id: 'history' as TabType, label: 'היסטוריית התאמות', icon: History, count: 0 },
     { id: 'proposals-history' as TabType, label: 'היסטוריית הצעות', icon: TrendingUp, count: 0 },
@@ -329,8 +333,33 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
         />
       case 'proposals':
         return <ProposalsTab accessToken={accessToken} onCountChange={setActiveProposalsCount} onUrgentCountChange={setUrgentProposalsCount} shadchanId={shadchanId} loadActiveProposalsCount={loadActiveProposalsCount} />
+      case 'boys':
+        return <CandidatesList 
+          shadchanId={shadchanId!} 
+          type="boys"
+          onAddCandidate={() => {/* TODO: modal הוספת בחור */}}
+          onEditCandidate={() => {/* TODO: modal עריכת בחור */}}
+          onViewCandidate={() => {/* TODO: modal צפייה בבחור */}}
+          onImportCandidates={() => setActiveTab('import')}
+        />
+      case 'girls':
+        return <CandidatesList 
+          shadchanId={shadchanId!} 
+          type="girls"
+          onAddCandidate={() => {/* TODO: modal הוספת בחורה */}}
+          onEditCandidate={() => {/* TODO: modal עריכת בחורה */}}
+          onViewCandidate={() => {/* TODO: modal צפייה בבחורה */}}
+          onImportCandidates={() => setActiveTab('import')}
+        />
       case 'import':
-        return <ImportTab accessToken={accessToken} />
+        return <SmartImport 
+          shadchanId={shadchanId!} 
+          onImportComplete={(results) => {
+            // רענון רשימות המועמדים אחרי ייבוא מוצלח
+            console.log('ייבוא הושלם:', results);
+            // TODO: רענון הטאבים של בנים ובנות
+          }}
+        />
       case 'history':
         return <HistoryTab accessToken={accessToken} />
       case 'proposals-history':

@@ -218,25 +218,45 @@ export const createMatchPrompt = (
 **${gender === 'male' ? 'בחור' : 'בחורה'}:**
 - שם: ${candidate.name}
 - גיל: ${candidate.age}
+- תאריך לידה: ${candidate.birthDate || 'לא צוין'}
+- טווח גיל מועדף: ${candidate.preferredAgeRange || 'לא צוין'}
 - מצב משפחתי: ${candidate.maritalStatus || 'לא צוין'}
-- רמה דתית: ${candidate.religiousLevel || 'לא צוין'}
+- פתוח לסטטוס/עדה אחרת: ${candidate.openToOtherSectors || 'לא צוין'}
+- מגזר: ${candidate.sector || 'לא צוין'}
 - עדה/קהילה: ${candidate.community || 'לא צוין'}
+- רמה דתית: ${candidate.religiousLevel || 'לא צוין'}
+- השתייכות לזרם דתי: ${candidate.religiousStream || 'לא צוין'}
+- מספר אחים ואחיות: ${candidate.siblings || 'לא צוין'}
+- סדר לידה במשפחה: ${candidate.birthOrder || 'לא צוין'}
 - מקום מגורים: ${candidate.location || 'לא צוין'}
 - השכלה: ${candidate.education || 'לא צוין'}
-- מקצוע: ${candidate.profession || 'לא צוין'}`
+- מקצוע: ${candidate.profession || 'לא צוין'}
+- שפות מדוברות: ${candidate.languages || 'לא צוין'}
+- גובה: ${candidate.height || 'לא צוין'}
+- מראה חיצוני: ${candidate.appearance || 'לא צוין'}
+- סגנון לבוש: ${candidate.dressStyle || 'לא צוין'}
+- עישון: ${candidate.smoking || 'לא צוין'}`
 
     if (analysisDepth === 'detailed' || analysisDepth === 'comprehensive') {
       section += `
 - רקע משפחתי: ${candidate.familyBackground || 'לא צוין'}
+- סגנון חיים: ${candidate.lifestyle || 'לא צוין'}
+- גמישות לשינויים: ${candidate.flexibility || 'לא צוין'}
+- שימוש באינטרנט ורשתות חברתיות: ${candidate.internetUsage || 'לא צוין'}
+- השקפה בנושא חינוך ילדים: ${candidate.educationViews || 'לא צוין'}
+- כמה משפטים על עצמי: ${candidate.aboutMe || 'לא צוין'}
 - ${pronouns.seeking}: ${candidate.lookingFor || 'לא צוין'}
 - ${pronouns.important}: ${candidate.importantToMe || 'לא צוין'}
-- ${pronouns.dealBreaker}: ${candidate.dealBreakers || 'לא צוין'}`
+- דברים שחשובים לי שיהיו בבן/ת זוגי: ${candidate.importantQualities || 'לא צוין'}
+- ${pronouns.dealBreaker}: ${candidate.dealBreakers || 'לא צוין'}
+- העדפות נוספות/הערות: ${candidate.additionalNotes || 'לא צוין'}`
     }
 
     if (analysisDepth === 'comprehensive') {
       section += `
 - תחביבים: ${candidate.hobbies || 'לא צוין'}
-- סוג אישיות: ${candidate.personalityType || 'לא צוין'}`
+- ערכים ואמונות: ${candidate.valuesAndBeliefs || 'לא צוין'}
+- סוג אישיות: ${candidate.personalityType || candidate.personality || 'לא צוין'}`
     }
 
     return section

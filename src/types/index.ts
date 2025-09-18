@@ -219,6 +219,113 @@ export interface DetailedCandidate {
   [key: string]: any;
 }
 
+// =============== טיפוסים חדשים לטבלאות סופהבייס ===============
+
+// מועמד בסופהבייס - גרסה מלאה וקבועה
+export interface SupabaseCandidate {
+  id: string; // UUID
+  shadchan_id: string;
+  internal_id: string; // מזהה פנימי ייחודי
+  
+  // נתונים בסיסיים
+  name: string;
+  birth_date?: string; // DATE
+  age: number;
+  preferred_age_range?: string;
+  marital_status: string;
+  open_to_other_sectors?: string;
+  sector?: string;
+  community?: string; // עדה
+  religious_level?: string;
+  religious_stream?: string; // זרם דתי
+  siblings?: number;
+  birth_order?: number;
+  location: string;
+  
+  // השכלה ומקצוע
+  education?: string;
+  profession?: string;
+  languages?: string;
+  
+  // מראה חיצוני
+  height?: string;
+  appearance?: string;
+  dress_style?: string;
+  smoking?: string;
+  
+  // טקסט מורחב - כל השדות החדשים
+  hobbies?: string;
+  values_and_beliefs?: string;
+  personality?: string;
+  lifestyle?: string;
+  flexibility?: string;
+  internet_usage?: string;
+  education_views?: string;
+  about_me?: string;
+  looking_for?: string;
+  important_qualities?: string;
+  deal_breakers?: string;
+  additional_notes?: string;
+  
+  // ניהול
+  status: 'זמין' | 'בתהליך' | 'לא זמין' | 'מחוק';
+  
+  // תיעוד
+  created_at: string;
+  updated_at: string;
+}
+
+// פרטי קשר נפרדים
+export interface CandidateContact {
+  id: string;
+  shadchan_id: string;
+  candidate_id: string;
+  candidate_type: 'boy' | 'girl';
+  
+  // פרטי קשר רגישים
+  email?: string;
+  phone?: string;
+  
+  // מעקב הצעות
+  currently_proposed?: string;
+  previously_proposed?: string;
+  
+  created_at: string;
+  updated_at: string;
+}
+
+// מועמד מורחב עם פרטי קשר
+export interface EnhancedSupabaseCandidate extends SupabaseCandidate {
+  contact?: CandidateContact;
+}
+
+// פילטרים לחיפוש מועמדים
+export interface CandidateFilters {
+  searchTerm?: string;
+  minAge?: number;
+  maxAge?: number;
+  city?: string;
+  religiousLevel?: string;
+  status?: SupabaseCandidate['status'];
+  maritalStatus?: string;
+  profession?: string;
+}
+
+// פרמטרי חיפוש מועמדים
+export interface CandidateSearchParams extends CandidateFilters {
+  limit?: number;
+  offset?: number;
+  sortBy?: 'name' | 'age' | 'location' | 'created_at';
+  sortOrder?: 'asc' | 'desc';
+}
+
+// תוצאות חיפוש
+export interface CandidateSearchResults {
+  candidates: SupabaseCandidate[];
+  total: number;
+  hasMore: boolean;
+}
+
 // סטטיסטיקות תהליך ההתאמה
 export interface MatchingStats {
   totalPairs: number;

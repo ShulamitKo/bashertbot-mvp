@@ -5,7 +5,9 @@
       "Bash(npm run build:*)",
       "Bash(claude config set --global preferredNotifChannel terminal_bell)",
       "Bash(npx tsc:*)",
-      "Bash(npm run dev:*)"
+      "Bash(npm run dev:*)",
+      "Bash(node:*)",
+      "Bash(npm:*)"
     ],
     "deny": []
   }
