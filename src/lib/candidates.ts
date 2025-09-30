@@ -14,8 +14,7 @@ export const createBoy = async (
   shadchanId: string,
   candidateData: Omit<SupabaseCandidate, 'id' | 'shadchan_id' | 'created_at' | 'updated_at'>
 ): Promise<SupabaseCandidate> => {
-  console.log('🔄 יוצר בחור חדש:', candidateData.name);
-  
+
   const { data, error } = await supabase
     .from('candidates_boys')
     .insert({
@@ -26,11 +25,10 @@ export const createBoy = async (
     .single();
 
   if (error) {
-    console.error('❌ שגיאה ביצירת בחור:', error);
+
     throw new Error(`שגיאה ביצירת בחור: ${error.message}`);
   }
 
-  console.log('✅ בחור נוצר בהצלחה:', data.name);
   return data;
 };
 
@@ -38,68 +36,100 @@ export const updateBoy = async (
   candidateId: string,
   updates: Partial<Omit<SupabaseCandidate, 'id' | 'shadchan_id' | 'created_at'>>
 ): Promise<SupabaseCandidate> => {
-  console.log('🔄 מעדכן בחור:', candidateId);
-  
+
+  // סינון רק שדות שמותרים לעדכון - מבוסס על הסכמת הטבלה האמיתית
+  const allowedFields = [
+    'internal_id', 'name', 'birth_date', 'age', 'preferred_age_range', 'marital_status',
+    'open_to_other_sectors', 'sector', 'community', 'religious_level', 'religious_stream',
+    'siblings', 'birth_order', 'location', 'education', 'profession', 'languages',
+    'height', 'appearance', 'dress_style', 'smoking', 'hobbies', 'values_and_beliefs',
+    'personality', 'lifestyle', 'flexibility', 'internet_usage', 'education_views',
+    'about_me', 'looking_for', 'important_qualities', 'deal_breakers',
+    'additional_notes', 'status'
+  ];
+
+  const filteredUpdates = Object.keys(updates)
+    .filter(key => allowedFields.includes(key))
+    .reduce((obj, key) => {
+      obj[key] = (updates as any)[key];
+      return obj;
+    }, {} as any);
+
   const { data, error } = await supabase
     .from('candidates_boys')
-    .update(updates)
+    .update(filteredUpdates)
     .eq('id', candidateId)
     .select()
     .single();
 
   if (error) {
-    console.error('❌ שגיאה בעדכון בחור:', error);
+
     throw new Error(`שגיאה בעדכון בחור: ${error.message}`);
   }
 
-  console.log('✅ בחור עודכן בהצלחה:', data.name);
   return data;
 };
 
 export const deleteBoy = async (candidateId: string): Promise<void> => {
-  console.log('🔄 מוחק בחור (מחיקה רכה):', candidateId);
-  
+
   const { error } = await supabase
     .from('candidates_boys')
     .update({ status: 'מחוק' })
     .eq('id', candidateId);
 
   if (error) {
-    console.error('❌ שגיאה במחיקת בחור:', error);
+
     throw new Error(`שגיאה במחיקת בחור: ${error.message}`);
   }
 
-  console.log('✅ בחור נמחק בהצלחה');
 };
 
 export const getBoy = async (candidateId: string): Promise<EnhancedSupabaseCandidate | null> => {
-  console.log('🔄 מביא נתוני בחור:', candidateId);
-  
-  const { data, error } = await supabase
+
+  // קודם מביאים את נתוני המועמד
+  const { data: candidateData, error: candidateError } = await supabase
     .from('candidates_boys')
-    .select(`
-      *,
-      contact:candidates_contact(*)
-    `)
+    .select('*')
     .eq('id', candidateId)
     .neq('status', 'מחוק')
     .single();
 
-  if (error) {
-    if (error.code === 'PGRST116') return null; // לא נמצא
-    console.error('❌ שגיאה בהבאת בחור:', error);
-    throw new Error(`שגיאה בהבאת בחור: ${error.message}`);
+  if (candidateError) {
+    if (candidateError.code === 'PGRST116') {
+
+      return null; // לא נמצא
+    }
+
+    throw new Error(`שגיאה בהבאת בחור: ${candidateError.message}`);
   }
 
-  return data;
+  if (!candidateData) {
+
+    return null;
+  }
+
+  // אחר כך מביאים את פרטי הקשר בנפרד
+  const { data: contactData, error: contactError } = await supabase
+    .from('candidates_contact')
+    .select('*')
+    .eq('candidate_id', candidateId)
+    .eq('candidate_type', 'boy')
+    .single();
+
+  // אם יש שגיאה בפרטי קשר (כמו שלא נמצא) - זה בסדר, ממשיכים בלי
+  const enhancedCandidate: EnhancedSupabaseCandidate = {
+    ...candidateData,
+    contact: contactError?.code === 'PGRST116' ? undefined : contactData || undefined
+  };
+
+  return enhancedCandidate;
 };
 
 export const searchBoys = async (
-  shadchanId: string, 
+  shadchanId: string,
   params: CandidateSearchParams = {}
 ): Promise<CandidateSearchResults> => {
-  console.log('🔍 מחפש בנים:', params);
-  
+
   let query = supabase
     .from('candidates_boys')
     .select('*', { count: 'exact' })
@@ -131,7 +161,7 @@ export const searchBoys = async (
   const { data, error, count } = await query;
 
   if (error) {
-    console.error('❌ שגיאה בחיפוש בנים:', error);
+
     throw new Error(`שגיאה בחיפוש בנים: ${error.message}`);
   }
 
@@ -141,7 +171,6 @@ export const searchBoys = async (
     hasMore: (count || 0) > (offset + limit)
   };
 
-  console.log(`✅ נמצאו ${results.total} בנים, מציג ${data?.length || 0}`);
   return results;
 };
 
@@ -151,8 +180,7 @@ export const createGirl = async (
   shadchanId: string,
   candidateData: Omit<SupabaseCandidate, 'id' | 'shadchan_id' | 'created_at' | 'updated_at'>
 ): Promise<SupabaseCandidate> => {
-  console.log('🔄 יוצרת בחורה חדשה:', candidateData.name);
-  
+
   const { data, error } = await supabase
     .from('candidates_girls')
     .insert({
@@ -163,11 +191,10 @@ export const createGirl = async (
     .single();
 
   if (error) {
-    console.error('❌ שגיאה ביצירת בחורה:', error);
+
     throw new Error(`שגיאה ביצירת בחורה: ${error.message}`);
   }
 
-  console.log('✅ בחורה נוצרה בהצלחה:', data.name);
   return data;
 };
 
@@ -175,68 +202,100 @@ export const updateGirl = async (
   candidateId: string,
   updates: Partial<Omit<SupabaseCandidate, 'id' | 'shadchan_id' | 'created_at'>>
 ): Promise<SupabaseCandidate> => {
-  console.log('🔄 מעדכנת בחורה:', candidateId);
-  
+
+  // סינון רק שדות שמותרים לעדכון - מבוסס על הסכמת הטבלה האמיתית
+  const allowedFields = [
+    'internal_id', 'name', 'birth_date', 'age', 'preferred_age_range', 'marital_status',
+    'open_to_other_sectors', 'sector', 'community', 'religious_level', 'religious_stream',
+    'siblings', 'birth_order', 'location', 'education', 'profession', 'languages',
+    'height', 'appearance', 'dress_style', 'smoking', 'hobbies', 'values_and_beliefs',
+    'personality', 'lifestyle', 'flexibility', 'internet_usage', 'education_views',
+    'about_me', 'looking_for', 'important_qualities', 'deal_breakers',
+    'additional_notes', 'status'
+  ];
+
+  const filteredUpdates = Object.keys(updates)
+    .filter(key => allowedFields.includes(key))
+    .reduce((obj, key) => {
+      obj[key] = (updates as any)[key];
+      return obj;
+    }, {} as any);
+
   const { data, error } = await supabase
     .from('candidates_girls')
-    .update(updates)
+    .update(filteredUpdates)
     .eq('id', candidateId)
     .select()
     .single();
 
   if (error) {
-    console.error('❌ שגיאה בעדכון בחורה:', error);
+
     throw new Error(`שגיאה בעדכון בחורה: ${error.message}`);
   }
 
-  console.log('✅ בחורה עודכנה בהצלחה:', data.name);
   return data;
 };
 
 export const deleteGirl = async (candidateId: string): Promise<void> => {
-  console.log('🔄 מוחקת בחורה (מחיקה רכה):', candidateId);
-  
+
   const { error } = await supabase
     .from('candidates_girls')
     .update({ status: 'מחוק' })
     .eq('id', candidateId);
 
   if (error) {
-    console.error('❌ שגיאה במחיקת בחורה:', error);
+
     throw new Error(`שגיאה במחיקת בחורה: ${error.message}`);
   }
 
-  console.log('✅ בחורה נמחקה בהצלחה');
 };
 
 export const getGirl = async (candidateId: string): Promise<EnhancedSupabaseCandidate | null> => {
-  console.log('🔄 מביאה נתוני בחורה:', candidateId);
-  
-  const { data, error } = await supabase
+
+  // קודם מביאים את נתוני המועמדת
+  const { data: candidateData, error: candidateError } = await supabase
     .from('candidates_girls')
-    .select(`
-      *,
-      contact:candidates_contact(*)
-    `)
+    .select('*')
     .eq('id', candidateId)
     .neq('status', 'מחוק')
     .single();
 
-  if (error) {
-    if (error.code === 'PGRST116') return null; // לא נמצא
-    console.error('❌ שגיאה בהבאת בחורה:', error);
-    throw new Error(`שגיאה בהבאת בחורה: ${error.message}`);
+  if (candidateError) {
+    if (candidateError.code === 'PGRST116') {
+
+      return null; // לא נמצא
+    }
+
+    throw new Error(`שגיאה בהבאת בחורה: ${candidateError.message}`);
   }
 
-  return data;
+  if (!candidateData) {
+
+    return null;
+  }
+
+  // אחר כך מביאים את פרטי הקשר בנפרד
+  const { data: contactData, error: contactError } = await supabase
+    .from('candidates_contact')
+    .select('*')
+    .eq('candidate_id', candidateId)
+    .eq('candidate_type', 'girl')
+    .single();
+
+  // אם יש שגיאה בפרטי קשר (כמו שלא נמצא) - זה בסדר, ממשיכים בלי
+  const enhancedCandidate: EnhancedSupabaseCandidate = {
+    ...candidateData,
+    contact: contactError?.code === 'PGRST116' ? undefined : contactData || undefined
+  };
+
+  return enhancedCandidate;
 };
 
 export const searchGirls = async (
-  shadchanId: string, 
+  shadchanId: string,
   params: CandidateSearchParams = {}
 ): Promise<CandidateSearchResults> => {
-  console.log('🔍 מחפשת בנות:', params);
-  
+
   let query = supabase
     .from('candidates_girls')
     .select('*', { count: 'exact' })
@@ -268,7 +327,7 @@ export const searchGirls = async (
   const { data, error, count } = await query;
 
   if (error) {
-    console.error('❌ שגיאה בחיפוש בנות:', error);
+
     throw new Error(`שגיאה בחיפוש בנות: ${error.message}`);
   }
 
@@ -278,7 +337,6 @@ export const searchGirls = async (
     hasMore: (count || 0) > (offset + limit)
   };
 
-  console.log(`✅ נמצאו ${results.total} בנות, מציגה ${data?.length || 0}`);
   return results;
 };
 
@@ -290,8 +348,7 @@ export const createCandidateContact = async (
   candidateType: 'boy' | 'girl',
   contactData: Omit<CandidateContact, 'id' | 'shadchan_id' | 'candidate_id' | 'candidate_type' | 'created_at' | 'updated_at'>
 ): Promise<CandidateContact> => {
-  console.log('🔄 יוצר פרטי קשר למועמד:', candidateId);
-  
+
   const { data, error } = await supabase
     .from('candidates_contact')
     .insert({
@@ -304,11 +361,10 @@ export const createCandidateContact = async (
     .single();
 
   if (error) {
-    console.error('❌ שגיאה ביצירת פרטי קשר:', error);
+
     throw new Error(`שגיאה ביצירת פרטי קשר: ${error.message}`);
   }
 
-  console.log('✅ פרטי קשר נוצרו בהצלחה');
   return data;
 };
 
@@ -317,8 +373,7 @@ export const updateCandidateContact = async (
   candidateType: 'boy' | 'girl',
   updates: Partial<Omit<CandidateContact, 'id' | 'shadchan_id' | 'candidate_id' | 'candidate_type' | 'created_at'>>
 ): Promise<CandidateContact> => {
-  console.log('🔄 מעדכן פרטי קשר למועמד:', candidateId);
-  
+
   const { data, error } = await supabase
     .from('candidates_contact')
     .update(updates)
@@ -328,11 +383,10 @@ export const updateCandidateContact = async (
     .single();
 
   if (error) {
-    console.error('❌ שגיאה בעדכון פרטי קשר:', error);
+
     throw new Error(`שגיאה בעדכון פרטי קשר: ${error.message}`);
   }
 
-  console.log('✅ פרטי קשר עודכנו בהצלחה');
   return data;
 };
 
@@ -340,22 +394,26 @@ export const getCandidateContact = async (
   candidateId: string,
   candidateType: 'boy' | 'girl'
 ): Promise<CandidateContact | null> => {
-  console.log('🔄 מביא פרטי קשר למועמד:', candidateId);
-  
-  const { data, error } = await supabase
-    .from('candidates_contact')
-    .select('*')
-    .eq('candidate_id', candidateId)
-    .eq('candidate_type', candidateType)
-    .single();
 
-  if (error) {
-    if (error.code === 'PGRST116') return null; // לא נמצא
-    console.error('❌ שגיאה בהבאת פרטי קשר:', error);
-    throw new Error(`שגיאה בהבאת פרטי קשר: ${error.message}`);
+  try {
+    const { data, error } = await supabase
+      .from('candidates_contact')
+      .select('*')
+      .eq('candidate_id', candidateId)
+      .eq('candidate_type', candidateType)
+      .maybeSingle(); // שינוי מ-single() ל-maybeSingle()
+
+    if (error) {
+
+      // במקום לזרוק שגיאה, נחזיר null עבור רשומה שלא נמצאה
+      return null;
+    }
+
+    return data;
+  } catch (error) {
+
+    return null; // החזרת null במקום זריקת שגיאה
   }
-
-  return data;
 };
 
 // =============== פונקציות סטטיסטיקות ===============
@@ -370,8 +428,7 @@ export interface CandidateStats {
 }
 
 export const getCandidateStats = async (shadchanId: string): Promise<CandidateStats> => {
-  console.log('📊 מביא סטטיסטיקות מועמדים לשדכן:', shadchanId);
-  
+
   const [boysResult, girlsResult] = await Promise.all([
     supabase
       .from('candidates_boys')
@@ -386,7 +443,7 @@ export const getCandidateStats = async (shadchanId: string): Promise<CandidateSt
   ]);
 
   if (boysResult.error || girlsResult.error) {
-    console.error('❌ שגיאה בהבאת סטטיסטיקות');
+
     throw new Error('שגיאה בהבאת סטטיסטיקות מועמדים');
   }
 
@@ -402,7 +459,6 @@ export const getCandidateStats = async (shadchanId: string): Promise<CandidateSt
     inProcessGirls: girls.filter(g => g.status === 'בתהליך').length,
   };
 
-  console.log('✅ סטטיסטיקות:', stats);
   return stats;
 };
 
@@ -431,8 +487,7 @@ export const validateCandidateData = (data: Partial<SupabaseCandidate>): string[
 
 // מחיקת כל הבנים של השדכן
 export const deleteAllBoys = async (shadchanId: string): Promise<number> => {
-  console.log('🔄 מוחק את כל הבנים של השדכן:', shadchanId);
-  
+
   const { data, error } = await supabase
     .from('candidates_boys')
     .delete()
@@ -440,19 +495,18 @@ export const deleteAllBoys = async (shadchanId: string): Promise<number> => {
     .select('id');
 
   if (error) {
-    console.error('❌ שגיאה במחיקת בנים:', error);
+
     throw new Error(`שגיאה במחיקת בנים: ${error.message}`);
   }
 
   const deletedCount = data?.length || 0;
-  console.log(`✅ נמחקו ${deletedCount} בנים`);
+
   return deletedCount;
 };
 
 // מחיקת כל הבנות של השדכן
 export const deleteAllGirls = async (shadchanId: string): Promise<number> => {
-  console.log('🔄 מוחק את כל הבנות של השדכן:', shadchanId);
-  
+
   const { data, error } = await supabase
     .from('candidates_girls')
     .delete()
@@ -460,19 +514,18 @@ export const deleteAllGirls = async (shadchanId: string): Promise<number> => {
     .select('id');
 
   if (error) {
-    console.error('❌ שגיאה במחיקת בנות:', error);
+
     throw new Error(`שגיאה במחיקת בנות: ${error.message}`);
   }
 
   const deletedCount = data?.length || 0;
-  console.log(`✅ נמחקו ${deletedCount} בנות`);
+
   return deletedCount;
 };
 
 // מחיקת כל פרטי הקשר של השדכן
 export const deleteAllCandidatesContact = async (shadchanId: string): Promise<number> => {
-  console.log('🔄 מוחק את כל פרטי הקשר של השדכן:', shadchanId);
-  
+
   const { data, error } = await supabase
     .from('candidates_contact')
     .delete()
@@ -480,12 +533,12 @@ export const deleteAllCandidatesContact = async (shadchanId: string): Promise<nu
     .select('id');
 
   if (error) {
-    console.error('❌ שגיאה במחיקת פרטי קשר:', error);
+
     throw new Error(`שגיאה במחיקת פרטי קשר: ${error.message}`);
   }
 
   const deletedCount = data?.length || 0;
-  console.log(`✅ נמחקו ${deletedCount} רשומות פרטי קשר`);
+
   return deletedCount;
 };
 
@@ -496,8 +549,7 @@ export const deleteAllCandidates = async (shadchanId: string): Promise<{
   deletedContacts: number;
   total: number;
 }> => {
-  console.log('🔄 מוחק את כל המועמדים של השדכן:', shadchanId);
-  
+
   try {
     // מחיקה במקביל של כל הטבלאות
     const [deletedBoys, deletedGirls, deletedContacts] = await Promise.all([
@@ -507,13 +559,6 @@ export const deleteAllCandidates = async (shadchanId: string): Promise<{
     ]);
 
     const total = deletedBoys + deletedGirls;
-    
-    console.log('✅ מחיקה מקיפה הושלמה:', {
-      deletedBoys,
-      deletedGirls,
-      deletedContacts,
-      total
-    });
 
     return {
       deletedBoys,
@@ -522,7 +567,7 @@ export const deleteAllCandidates = async (shadchanId: string): Promise<{
       total
     };
   } catch (error) {
-    console.error('❌ שגיאה במחיקה מקיפה:', error);
+
     throw error;
   }
 };

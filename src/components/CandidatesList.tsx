@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Loader2, Search, Plus, Edit, Trash2, Eye, Filter, Download, Upload } from 'lucide-react';
-import { 
-  searchBoys, 
-  searchGirls, 
-  deleteBoy, 
-  deleteGirl, 
+import { Loader2, Search, Plus, Edit, Trash2, Eye, Filter, Upload } from 'lucide-react';
+import {
+  searchBoys,
+  searchGirls,
+  deleteBoy,
+  deleteGirl,
   getCandidateStats,
   type CandidateStats
 } from '../lib/candidates';
 import type { SupabaseCandidate, CandidateSearchParams } from '../types';
+import { CandidateModal } from './CandidateModal';
+import { CandidateForm } from './CandidateForm';
 
 interface CandidatesListProps {
   shadchanId: string;
@@ -42,6 +44,18 @@ export const CandidatesList: React.FC<CandidatesListProps> = ({
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
 
+  // State למודל מועמד
+  const [selectedCandidate, setSelectedCandidate] = useState<SupabaseCandidate | null>(null);
+  const [modalMode, setModalMode] = useState<'view' | 'edit'>('view');
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // State לטופס הוספת מועמד
+  const [isAddFormOpen, setIsAddFormOpen] = useState(false);
+
+  // State למחיקת מועמד
+  const [candidateToDelete, setCandidateToDelete] = useState<SupabaseCandidate | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
   const isGirls = type === 'girls';
   const title = isGirls ? 'רשימת בנות' : 'רשימת בנים';
   const searchFunction = isGirls ? searchGirls : searchBoys;
@@ -71,7 +85,6 @@ export const CandidatesList: React.FC<CandidatesListProps> = ({
       setHasMore(results.hasMore);
       
     } catch (error) {
-      console.error('שגיאה בטעינת מועמדים:', error);
       // TODO: הצגת הודעת שגיאה למשתמש
     } finally {
       setLoading(false);
@@ -86,7 +99,6 @@ export const CandidatesList: React.FC<CandidatesListProps> = ({
       const statsData = await getCandidateStats(shadchanId);
       setStats(statsData);
     } catch (error) {
-      console.error('שגיאה בטעינת סטטיסטיקות:', error);
     }
   }, [shadchanId]);
 
@@ -109,21 +121,91 @@ export const CandidatesList: React.FC<CandidatesListProps> = ({
     return () => clearTimeout(timeoutId);
   }, [searchTerm]);
 
-  // מחיקת מועמד
-  const handleDelete = async (candidate: SupabaseCandidate) => {
-    if (!confirm(`האם אתה בטוח שברצונך למחוק את ${candidate.name}?`)) {
-      return;
-    }
+  // פתיחת דיאלוג מחיקה
+  const handleDeleteClick = (candidate: SupabaseCandidate) => {
+    setCandidateToDelete(candidate);
+    setShowDeleteConfirm(true);
+  };
+
+  // ביטול מחיקה
+  const handleCancelDelete = () => {
+    setCandidateToDelete(null);
+    setShowDeleteConfirm(false);
+  };
+
+  // אישור מחיקת מועמד
+  const handleConfirmDelete = async () => {
+    if (!candidateToDelete) return;
 
     try {
-      await deleteFunction(candidate.id);
+      await deleteFunction(candidateToDelete.id);
+      setShowDeleteConfirm(false);
+      setCandidateToDelete(null);
       await loadCandidates(true);
       await loadStats();
       // TODO: הודעת הצלחה
     } catch (error) {
-      console.error('שגיאה במחיקת מועמד:', error);
       // TODO: הודעת שגיאה
     }
+  };
+
+  // פתיחת מודל צפייה
+  const handleViewCandidate = (candidate: SupabaseCandidate) => {
+    setSelectedCandidate(candidate);
+    setModalMode('view');
+    setIsModalOpen(true);
+    if (onViewCandidate) {
+      onViewCandidate(candidate);
+    }
+  };
+
+  // פתיחת מודל עריכה
+  const handleEditCandidate = (candidate: SupabaseCandidate) => {
+    setSelectedCandidate(candidate);
+    setModalMode('edit');
+    setIsModalOpen(true);
+    if (onEditCandidate) {
+      onEditCandidate(candidate);
+    }
+  };
+
+  // סגירת מודל
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setSelectedCandidate(null);
+  };
+
+  // שמירת מועמד ממודל
+  const handleSaveCandidate = (updatedCandidate: SupabaseCandidate) => {
+    // עדכון הרשימה המקומית
+    setCandidates(prev =>
+      prev.map(c => c.id === updatedCandidate.id ? updatedCandidate : c)
+    );
+    // רענון סטטיסטיקות
+    loadStats();
+  };
+
+  // פתיחת טופס הוספת מועמד
+  const handleAddCandidate = () => {
+    setIsAddFormOpen(true);
+    if (onAddCandidate) {
+      onAddCandidate();
+    }
+  };
+
+  // סגירת טופס הוספת מועמד
+  const handleCloseAddForm = () => {
+    setIsAddFormOpen(false);
+  };
+
+  // שמירת מועמד חדש מטופס
+  const handleSaveNewCandidate = (newCandidate: SupabaseCandidate) => {
+    // הוספה לרשימה המקומית
+    setCandidates(prev => [newCandidate, ...prev]);
+    // רענון סטטיסטיקות
+    loadStats();
+    // רענון מלא של הרשימה כדי לוודא שהכל מעודכן
+    loadCandidates(true);
   };
 
   // טעינת עמוד הבא
@@ -182,15 +264,14 @@ export const CandidatesList: React.FC<CandidatesListProps> = ({
             </button>
           )}
           
-          {onAddCandidate && (
-            <button
-              onClick={onAddCandidate}
-              className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              הוסף {isGirls ? 'בחורה' : 'בחור'}
-            </button>
-          )}
+          <button
+            onClick={handleAddCandidate}
+            className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            הוסף {isGirls ? 'בחורה' : 'בחור'}
+          </button>
+
         </div>
       </div>
 
@@ -341,28 +422,24 @@ export const CandidatesList: React.FC<CandidatesListProps> = ({
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                    {onViewCandidate && (
-                      <button
-                        onClick={() => onViewCandidate(candidate)}
-                        className="text-blue-600 hover:text-blue-900"
-                        title="צפה"
-                      >
-                        <Eye className="w-4 h-4" />
-                      </button>
-                    )}
-                    
-                    {onEditCandidate && (
-                      <button
-                        onClick={() => onEditCandidate(candidate)}
-                        className="text-yellow-600 hover:text-yellow-900"
-                        title="ערוך"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </button>
-                    )}
+                    <button
+                      onClick={() => handleViewCandidate(candidate)}
+                      className="text-blue-600 hover:text-blue-900"
+                      title="צפה"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
+
+                    <button
+                      onClick={() => handleEditCandidate(candidate)}
+                      className="text-yellow-600 hover:text-yellow-900"
+                      title="ערוך"
+                    >
+                      <Edit className="w-4 h-4" />
+                    </button>
                     
                     <button
-                      onClick={() => handleDelete(candidate)}
+                      onClick={() => handleDeleteClick(candidate)}
                       className="text-red-600 hover:text-red-900"
                       title="מחק"
                     >
@@ -387,14 +464,12 @@ export const CandidatesList: React.FC<CandidatesListProps> = ({
         {!loading && candidates.length === 0 && (
           <div className="text-center py-8">
             <p className="text-gray-500">לא נמצאו מועמדים</p>
-            {onAddCandidate && (
-              <button
-                onClick={onAddCandidate}
-                className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                הוסף {isGirls ? 'בחורה' : 'בחור'} ראשון
-              </button>
-            )}
+            <button
+              onClick={handleAddCandidate}
+              className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              הוסף {isGirls ? 'בחורה' : 'בחור'} ראשון
+            </button>
           </div>
         )}
 
@@ -410,6 +485,55 @@ export const CandidatesList: React.FC<CandidatesListProps> = ({
           </div>
         )}
       </div>
+
+      {/* מודל מועמד */}
+      {selectedCandidate && (
+        <CandidateModal
+          candidateId={selectedCandidate.id}
+          candidateType={type}
+          mode={modalMode}
+          isOpen={isModalOpen}
+          onClose={handleCloseModal}
+          onSave={handleSaveCandidate}
+        />
+      )}
+
+      {/* טופס הוספת מועמד */}
+      <CandidateForm
+        shadchanId={shadchanId}
+        candidateType={type}
+        isOpen={isAddFormOpen}
+        onClose={handleCloseAddForm}
+        onSave={handleSaveNewCandidate}
+      />
+
+      {/* דיאלוג אישור מחיקה */}
+      {showDeleteConfirm && candidateToDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={handleCancelDelete}>
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-xl font-bold text-gray-900 mb-4">אישור מחיקה</h3>
+            <p className="text-gray-700 mb-6">
+              האם את/ה בטוח/ה שברצונך למחוק את <strong>{candidateToDelete.name}</strong>?
+              <br />
+              פעולה זו לא ניתנת לביטול.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={handleCancelDelete}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+              >
+                ביטול
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+              >
+                מחק
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

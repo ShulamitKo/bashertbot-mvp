@@ -31,17 +31,19 @@ import { ProposalCard } from '@/components/ui/ProposalCard'
 import { ProposalBadges, UrgencyIndicator } from '@/components/ui/ProposalBadges'
 import { CandidatesList } from '@/components/CandidatesList'
 import { SmartImport } from '@/components/SmartImport'
+import { Shadchan } from '@/types'
 
 interface DashboardPageProps {
   user?: {
     name: string
     email: string
   }
+  shadchan?: Shadchan | null
 }
 
 type TabType = 'matches' | 'proposals' | 'import' | 'settings' | 'history' | 'proposals-history' | 'boys' | 'girls'
 
-export const DashboardPage = ({ user }: DashboardPageProps) => {
+export const DashboardPage = ({ user, shadchan }: DashboardPageProps) => {
   const [activeTab, setActiveTab] = useState<TabType>('matches')
   const [accessToken, setAccessToken] = useState<string | null>(null)
   const [authStatus, setAuthStatus] = useState<'checking' | 'authenticated' | 'unauthenticated'>('checking')
@@ -69,6 +71,14 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
   const [openaiKey, setOpenaiKey] = useState('')
 
   // const [candidates] = useState<{ males: DetailedCandidate[], females: DetailedCandidate[] } | null>(null)
+
+  // הגדרת shadchanId כשה-shadchan מתקבל
+  useEffect(() => {
+    if (shadchan?.id) {
+      console.log('🔗 מגדיר shadchanId:', shadchan.id);
+      setShadchanId(shadchan.id);
+    }
+  }, [shadchan]);
 
   // פונקציה לטעינת מספר ההצעות הפעילות בלבד (מהירה)
   const loadActiveProposalsCount = useCallback(async () => {
@@ -334,8 +344,11 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
       case 'proposals':
         return <ProposalsTab accessToken={accessToken} onCountChange={setActiveProposalsCount} onUrgentCountChange={setUrgentProposalsCount} shadchanId={shadchanId} loadActiveProposalsCount={loadActiveProposalsCount} />
       case 'boys':
-        return <CandidatesList 
-          shadchanId={shadchanId!} 
+        if (!shadchanId) {
+          return <div className="p-6 text-center text-gray-500">טוען...</div>;
+        }
+        return <CandidatesList
+          shadchanId={shadchanId}
           type="boys"
           onAddCandidate={() => {/* TODO: modal הוספת בחור */}}
           onEditCandidate={() => {/* TODO: modal עריכת בחור */}}
@@ -343,8 +356,11 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
           onImportCandidates={() => setActiveTab('import')}
         />
       case 'girls':
-        return <CandidatesList 
-          shadchanId={shadchanId!} 
+        if (!shadchanId) {
+          return <div className="p-6 text-center text-gray-500">טוען...</div>;
+        }
+        return <CandidatesList
+          shadchanId={shadchanId}
           type="girls"
           onAddCandidate={() => {/* TODO: modal הוספת בחורה */}}
           onEditCandidate={() => {/* TODO: modal עריכת בחורה */}}
@@ -352,8 +368,11 @@ export const DashboardPage = ({ user }: DashboardPageProps) => {
           onImportCandidates={() => setActiveTab('import')}
         />
       case 'import':
-        return <SmartImport 
-          shadchanId={shadchanId!} 
+        if (!shadchanId) {
+          return <div className="p-6 text-center text-gray-500">טוען...</div>;
+        }
+        return <SmartImport
+          shadchanId={shadchanId}
           onImportComplete={(results) => {
             // רענון רשימות המועמדים אחרי ייבוא מוצלח
             console.log('ייבוא הושלם:', results);

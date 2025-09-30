@@ -118,6 +118,7 @@ function App() {
           name: shadchan?.name || user?.user_metadata?.full_name || 'שדכן',
           email: user?.email || ''
         }}
+        shadchan={shadchan}
       />
     </div>
   )

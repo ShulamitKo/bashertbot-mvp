@@ -69,4 +69,9 @@ jspm_packages/
 .vite/
 
 # Supabase
-.supabase/ 
+.supabase/
+
+# Debug scripts
+check-schema.js
+debug-candidates.js
+*.backup 
