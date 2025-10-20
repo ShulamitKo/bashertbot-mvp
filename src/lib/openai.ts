@@ -170,22 +170,52 @@ const getExistingProposals = async (): Promise<Set<string>> => {
 
     const { data: existingProposals, error } = await supabase
       .from('match_proposals')
-      .select('boy_row_id, girl_row_id')
+      .select('boy_row_id, girl_row_id, boy_candidate_id, girl_candidate_id, status')
       .eq('shadchan_id', shadchan.id)
-              .in('status', ['ready_for_processing']) // הצעות פעילות (לא כולל pending)
+      .in('status', [
+        'ready_for_processing',     // הצעה פעילה
+        'rejected',                  // נדחתה על ידי השדכן
+        'rejected_by_candidate',     // נדחתה על ידי מועמד
+        'ready_for_contact',         // בתהליך יצירת קשר
+        'contacting',                // יוצר קשר
+        'awaiting_response',         // ממתין לתגובה
+        'schedule_meeting',          // לקבוע פגישה
+        'meeting_scheduled',         // פגישה קבועה
+        'in_meeting_process',        // בתהליך פגישות
+        'meeting_completed',         // פגישה הושלמה
+        'completed',                 // הושלם בהצלחה (שידוך!)
+        'closed',                    // נסגר
+        'restored_to_active'         // הוחזר לטיפול
+      ])
 
     if (error) {
       console.error('שגיאה בקבלת הצעות קיימות:', error)
       return new Set()
     }
 
-    // יצירת Set של מפתחות יחודיים
+    // יצירת Set של מפתחות יחודיים - כולל כל ההצעות שנוצרו בעבר
     const existingKeys = new Set<string>()
+    let rejectedCount = 0
+    let activeCount = 0
+
     existingProposals?.forEach(proposal => {
-      existingKeys.add(`${proposal.boy_row_id}-${proposal.girl_row_id}`)
+      // שימוש ב-UUID אם קיים, אחרת ב-row_id
+      const boyId = proposal.boy_candidate_id || proposal.boy_row_id
+      const girlId = proposal.girl_candidate_id || proposal.girl_row_id
+      existingKeys.add(`${boyId}-${girlId}`)
+
+      // ספירה לדיבוג
+      if (proposal.status === 'rejected' || proposal.status === 'rejected_by_candidate') {
+        rejectedCount++
+      } else {
+        activeCount++
+      }
     })
 
-    console.log(`🔍 נמצאו ${existingKeys.size} הצעות קיימות פעילות`)
+    console.log(`🔍 נמצאו ${existingKeys.size} הצעות קיימות (מ-match_proposals):`)
+    console.log(`   ✅ ${activeCount} הצעות פעילות`)
+    console.log(`   ❌ ${rejectedCount} הצעות נדחו`)
+
     return existingKeys
 
   } catch (error) {
@@ -196,9 +226,9 @@ const getExistingProposals = async (): Promise<Set<string>> => {
 
 // יצירת זוגות פוטנציאליים עם ניקוד לוגי וסינון הצעות קיימות
 const createPotentialPairs = async (
-  males: DetailedCandidate[], 
-  females: DetailedCandidate[], 
-  logicalThreshold: number = 4,
+  males: DetailedCandidate[],
+  females: DetailedCandidate[],
+  logicalThreshold: number = 3.5,
   weights?: { age: number, location: number, religiousLevel: number, education: number, profession: number, familyBackground: number },
   hardFilters?: { maxAgeDifference: number, respectReligiousLevel: boolean, respectCommunityPreference: boolean, respectDealBreakers: boolean }
 ) => {
@@ -243,12 +273,85 @@ const createPotentialPairs = async (
     }
   }
 
-  console.log(`📊 סטטיסטיקות סינון:`)
+  console.log(`\n🔍 [DEBUG] בדיקת נתוני מועמדים שנטענו:`)
+  console.log(`   📊 סה"כ בנים: ${males.length}`)
+  console.log(`   📊 סה"כ בנות: ${females.length}`)
+
+  // הצגת דוגמה של מועמד אחד כדי לראות איזה שדות מלאים
+  if (males.length > 0) {
+    const sampleBoy = males[0]
+    console.log(`\n   🧑 דוגמה - בן ראשון:`)
+    console.log(`      שם: ${sampleBoy.name}`)
+    console.log(`      גיל: ${sampleBoy.age}`)
+    console.log(`      רמה דתית: "${sampleBoy.religiousLevel || 'לא צוין'}"`)
+    console.log(`      מיקום: "${sampleBoy.location || 'לא צוין'}"`)
+    console.log(`      השכלה: "${sampleBoy.education || 'לא צוין'}"`)
+    console.log(`      מקצוע: "${sampleBoy.profession || 'לא צוין'}"`)
+    console.log(`      רקע משפחתי: "${sampleBoy.familyBackground || 'לא צוין'}"`)
+  }
+
+  if (females.length > 0) {
+    const sampleGirl = females[0]
+    console.log(`\n   👧 דוגמה - בת ראשונה:`)
+    console.log(`      שם: ${sampleGirl.name}`)
+    console.log(`      גיל: ${sampleGirl.age}`)
+    console.log(`      רמה דתית: "${sampleGirl.religiousLevel || 'לא צוין'}"`)
+    console.log(`      מיקום: "${sampleGirl.location || 'לא צוין'}"`)
+    console.log(`      השכלה: "${sampleGirl.education || 'לא צוין'}"`)
+    console.log(`      מקצוע: "${sampleGirl.profession || 'לא צוין'}"`)
+    console.log(`      רקע משפחתי: "${sampleGirl.familyBackground || 'לא צוין'}"`)
+  }
+
+  // 🔍 איסוף כל הציונים לדיבוג (כולל אלו שלא עברו)
+  const allScores: Array<{ male: DetailedCandidate, female: DetailedCandidate, score: number, passedHardFilter: boolean }> = []
+
+  for (const male of males) {
+    for (const female of females) {
+      const passedHard = applyHardFilters(male, female, hardFilters)
+      if (passedHard) {
+        const score = calculateLogicalScore(male, female, weights)
+        allScores.push({
+          male,
+          female,
+          score: score,
+          passedHardFilter: true
+        })
+      }
+    }
+  }
+
+  // מיון לפי ציון (גבוה לנמוך)
+  allScores.sort((a, b) => b.score - a.score)
+
+  console.log(`\n📊 סטטיסטיקות סינון:`)
   console.log(`   - סה"כ התאמות אפשריות: ${totalPairs}`)
   console.log(`   - הצעות שכבר קיימות (דולגו): ${alreadyExists}`)
   console.log(`   - עברו סינון קשיח: ${hardFilterPassed}`)
   console.log(`   - יישלחו ל-GPT (ציון ≥${logicalThreshold}): ${logicalScorePassed}`)
   console.log(`   - חיסכון בעלות: ${((totalPairs - logicalScorePassed)/totalPairs*100).toFixed(1)}%`)
+
+  // 🔍 הצגת 10 הזוגות עם הציונים הגבוהים ביותר
+  console.log(`\n🏆 10 הזוגות עם הציונים הגבוהים ביותר:`)
+  allScores.slice(0, 10).forEach((item, index) => {
+    const emoji = item.score >= logicalThreshold ? '✅' : '❌'
+    console.log(`   ${index + 1}. ${emoji} ${item.male.name} & ${item.female.name} - ציון: ${item.score.toFixed(2)}`)
+  })
+
+  // 🔍 פירוט מלא של הזוג הטוב ביותר
+  if (allScores.length > 0) {
+    const { calculateLogicalScoreDetailed } = await import('./google-sheets')
+    const topPair = allScores[0]
+    const detailed = calculateLogicalScoreDetailed(topPair.male, topPair.female, weights)
+
+    console.log(`\n🔬 פירוט הזוג הטוב ביותר (${topPair.male.name} & ${topPair.female.name}):`)
+    console.log(`   📌 ציון כולל: ${detailed.score.toFixed(2)}`)
+    console.log(`   📍 גיל: ${detailed.breakdown.age.malAge} vs ${detailed.breakdown.age.femaleAge} (הפרש: ${detailed.breakdown.age.diff}) → ${detailed.breakdown.age.points} נקודות`)
+    console.log(`   📍 דת: "${detailed.breakdown.religious.male}" vs "${detailed.breakdown.religious.female}" → ${detailed.breakdown.religious.points} נקודות`)
+    console.log(`   📍 מיקום: "${detailed.breakdown.location.male}" vs "${detailed.breakdown.location.female}" → ${detailed.breakdown.location.points} נקודות`)
+    console.log(`   📍 השכלה: "${detailed.breakdown.education.male}" vs "${detailed.breakdown.education.female}" → ${detailed.breakdown.education.points} נקודות`)
+    console.log(`   📍 מקצוע: "${detailed.breakdown.profession.male}" vs "${detailed.breakdown.profession.female}" → ${detailed.breakdown.profession.points} נקודות`)
+    console.log(`   📍 רקע: "${detailed.breakdown.family.male}" vs "${detailed.breakdown.family.female}" → ${detailed.breakdown.family.points} נקודות`)
+  }
 
   return pairs
 }

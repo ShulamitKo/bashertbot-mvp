@@ -569,7 +569,7 @@ export const applyHardFilters = (
 
 // שלב 2: ניקוד לוגי (Logical Scoring) - ציון 0-10 עם משקולות מותאמות
 export const calculateLogicalScore = (
-  male: DetailedCandidate, 
+  male: DetailedCandidate,
   female: DetailedCandidate,
   weights?: { age: number, location: number, religiousLevel: number, education: number, profession: number, familyBackground: number }
 ): number => {
@@ -577,7 +577,7 @@ export const calculateLogicalScore = (
   const defaultWeights = { age: 8, location: 6, religiousLevel: 9, education: 5, profession: 4, familyBackground: 7 }
   const w = weights || defaultWeights
   let score = 0
-  
+
   // 1. ניקוד גיל (עם משקל מותאם)
   const ageDiff = Math.abs(male.age - female.age)
   let ageScore = 0
@@ -587,7 +587,7 @@ export const calculateLogicalScore = (
     ageScore = 1
   }
   score += (ageScore * w.age) / 5 // נורמליזציה ל-10 נקודות
-  
+
   // 2. ניקוד רמה דתית (עם משקל מותאם)
   const maleReligious = (male.religiousLevel || '').toLowerCase().trim()
   const femaleReligious = (female.religiousLevel || '').toLowerCase().trim()
@@ -598,7 +598,7 @@ export const calculateLogicalScore = (
     religiousScore = 1
   }
   score += (religiousScore * w.religiousLevel) / 5
-  
+
   // 3. ניקוד מקום מגורים (עם משקל מותאם)
   const maleLocation = male.location || ''
   const femaleLocation = female.location || ''
@@ -609,7 +609,7 @@ export const calculateLogicalScore = (
     locationScore = 1
   }
   score += (locationScore * w.location) / 5
-  
+
   // 4. ניקוד השכלה (עם משקל מותאם)
   const maleEducation = (male.education || '').toLowerCase().trim()
   const femaleEducation = (female.education || '').toLowerCase().trim()
@@ -620,7 +620,7 @@ export const calculateLogicalScore = (
     educationScore = 1
   }
   score += (educationScore * w.education) / 5
-  
+
   // 5. ניקוד מקצוע (עם משקל מותאם)
   const maleProfession = (male.profession || '').toLowerCase().trim()
   const femaleProfession = (female.profession || '').toLowerCase().trim()
@@ -631,7 +631,7 @@ export const calculateLogicalScore = (
     professionScore = 1
   }
   score += (professionScore * w.profession) / 5
-  
+
   // 6. ניקוד רקע משפחתי (עם משקל מותאם)
   const maleFamilyBackground = (male.familyBackground || '').toLowerCase().trim()
   const femaleFamilyBackground = (female.familyBackground || '').toLowerCase().trim()
@@ -642,8 +642,118 @@ export const calculateLogicalScore = (
     familyScore = 1
   }
   score += (familyScore * w.familyBackground) / 5
-  
+
   return Math.min(score, 10) // מגביל ל-10 מקסימום
+}
+
+// פונקציה מפורטת שמחזירה גם פירוט החישוב (לדיבוג)
+export const calculateLogicalScoreDetailed = (
+  male: DetailedCandidate,
+  female: DetailedCandidate,
+  weights?: { age: number, location: number, religiousLevel: number, education: number, profession: number, familyBackground: number }
+): { score: number, breakdown: any } => {
+  const defaultWeights = { age: 8, location: 6, religiousLevel: 9, education: 5, profession: 4, familyBackground: 7 }
+  const w = weights || defaultWeights
+  let score = 0
+  const breakdown: any = {}
+
+  // 1. גיל
+  const ageDiff = Math.abs(male.age - female.age)
+  let ageScore = 0
+  if (ageDiff <= 2) ageScore = 2
+  else if (ageDiff <= 5) ageScore = 1
+  const agePoints = (ageScore * w.age) / 5
+  score += agePoints
+  breakdown.age = {
+    malAge: male.age,
+    femaleAge: female.age,
+    diff: ageDiff,
+    baseScore: ageScore,
+    weight: w.age,
+    points: agePoints.toFixed(2)
+  }
+
+  // 2. רמה דתית
+  const maleReligious = (male.religiousLevel || '').toLowerCase().trim()
+  const femaleReligious = (female.religiousLevel || '').toLowerCase().trim()
+  let religiousScore = 0
+  if (maleReligious === femaleReligious) religiousScore = 2
+  else if (areReligiousLevelsCompatible(maleReligious, femaleReligious)) religiousScore = 1
+  const religiousPoints = (religiousScore * w.religiousLevel) / 5
+  score += religiousPoints
+  breakdown.religious = {
+    male: maleReligious || 'לא צוין',
+    female: femaleReligious || 'לא צוין',
+    baseScore: religiousScore,
+    weight: w.religiousLevel,
+    points: religiousPoints.toFixed(2)
+  }
+
+  // 3. מיקום
+  const maleLocation = male.location || ''
+  const femaleLocation = female.location || ''
+  let locationScore = 0
+  if (maleLocation.toLowerCase().trim() === femaleLocation.toLowerCase().trim()) locationScore = 2
+  else if (areLocationsNear(maleLocation, femaleLocation)) locationScore = 1
+  const locationPoints = (locationScore * w.location) / 5
+  score += locationPoints
+  breakdown.location = {
+    male: maleLocation || 'לא צוין',
+    female: femaleLocation || 'לא צוין',
+    baseScore: locationScore,
+    weight: w.location,
+    points: locationPoints.toFixed(2)
+  }
+
+  // 4. השכלה
+  const maleEducation = (male.education || '').toLowerCase().trim()
+  const femaleEducation = (female.education || '').toLowerCase().trim()
+  let educationScore = 0
+  if (maleEducation === femaleEducation) educationScore = 2
+  else if (areEducationLevelsCompatible(maleEducation, femaleEducation)) educationScore = 1
+  const educationPoints = (educationScore * w.education) / 5
+  score += educationPoints
+  breakdown.education = {
+    male: maleEducation || 'לא צוין',
+    female: femaleEducation || 'לא צוין',
+    baseScore: educationScore,
+    weight: w.education,
+    points: educationPoints.toFixed(2)
+  }
+
+  // 5. מקצוע
+  const maleProfession = (male.profession || '').toLowerCase().trim()
+  const femaleProfession = (female.profession || '').toLowerCase().trim()
+  let professionScore = 0
+  if (maleProfession === femaleProfession) professionScore = 2
+  else if (areProfessionsCompatible(maleProfession, femaleProfession)) professionScore = 1
+  const professionPoints = (professionScore * w.profession) / 5
+  score += professionPoints
+  breakdown.profession = {
+    male: maleProfession || 'לא צוין',
+    female: femaleProfession || 'לא צוין',
+    baseScore: professionScore,
+    weight: w.profession,
+    points: professionPoints.toFixed(2)
+  }
+
+  // 6. רקע משפחתי
+  const maleFamilyBackground = (male.familyBackground || '').toLowerCase().trim()
+  const femaleFamilyBackground = (female.familyBackground || '').toLowerCase().trim()
+  let familyScore = 0
+  if (maleFamilyBackground === femaleFamilyBackground) familyScore = 2
+  else if (countSharedWords(maleFamilyBackground, femaleFamilyBackground) >= 1) familyScore = 1
+  const familyPoints = (familyScore * w.familyBackground) / 5
+  score += familyPoints
+  breakdown.family = {
+    male: maleFamilyBackground || 'לא צוין',
+    female: femaleFamilyBackground || 'לא צוין',
+    baseScore: familyScore,
+    weight: w.familyBackground,
+    points: familyPoints.toFixed(2)
+  }
+
+  return { score: Math.min(score, 10), breakdown }
 }
 
 // פונקציות עזר מתקדמות
@@ -687,19 +797,57 @@ const areLocationsNear = (locationA: string, locationB: string): boolean => {
 
 // פונקציית עזר - בודקת תואמות רמות דתיות
 const areReligiousLevelsCompatible = (level1: string, level2: string): boolean => {
-  const compatibleGroups = [
-    ['דתי', 'דתי לאומי', 'דתי מודרני'],
-    ['מסורתי', 'מסורתי מחזיק מצוות', 'מסורתי פחות'],
-    ['חילוני', 'חילוני מסורתי'],
-    ['חרדי', 'חרדי לאומי']
-  ]
-  
-  for (const group of compatibleGroups) {
-    if (group.some(level => level1.includes(level)) && 
-        group.some(level => level2.includes(level))) {
-      return true
-    }
+  // נרמול - הכל לאותיות קטנות
+  const l1 = level1.toLowerCase()
+  const l2 = level2.toLowerCase()
+
+  // מיפוי מילות מפתח לקטגוריות
+  const religiousKeywords = {
+    charedi: ['חרדי', 'חרד', 'ישיבתי', 'ישיב', 'קולל', 'שמרני מאוד'],
+    dati: ['דתי', 'דת', 'לאומי', 'מודרני', 'ציוני', 'כיפה'],
+    masorti: ['מסורתי', 'מסורת', 'מחזיק מצוות', 'שומר מסורת'],
+    chiloni: ['חילוני', 'חילונ', 'לא דתי', 'פתוח', 'פתיח', 'לא שמרני', 'לא שמרנ'],
+    flexible: ['גמיש', 'פתוח', 'מתון', 'בראש טוב', 'לא מידאי', 'במידה']
   }
+
+  // זיהוי הקטגוריה של כל רמה
+  const detectCategory = (text: string): string[] => {
+    const categories: string[] = []
+    if (religiousKeywords.charedi.some(kw => text.includes(kw))) categories.push('charedi')
+    if (religiousKeywords.dati.some(kw => text.includes(kw))) categories.push('dati')
+    if (religiousKeywords.masorti.some(kw => text.includes(kw))) categories.push('masorti')
+    if (religiousKeywords.chiloni.some(kw => text.includes(kw))) categories.push('chiloni')
+    if (religiousKeywords.flexible.some(kw => text.includes(kw))) categories.push('flexible')
+    return categories
+  }
+
+  const cats1 = detectCategory(l1)
+  const cats2 = detectCategory(l2)
+
+  // אם שניהם גמישים - תואם
+  if (cats1.includes('flexible') && cats2.includes('flexible')) return true
+
+  // אם אחד גמיש והשני לא קיצוני - תואם
+  if (cats1.includes('flexible') || cats2.includes('flexible')) {
+    // גמיש תואם לכולם חוץ מחרדי קיצוני
+    const nonFlexible = cats1.includes('flexible') ? cats2 : cats1
+    if (!nonFlexible.includes('charedi')) return true
+  }
+
+  // קבוצות תואמות
+  const compatibleGroups = [
+    ['charedi'],
+    ['dati', 'masorti'],
+    ['masorti', 'chiloni'],
+    ['chiloni']
+  ]
+
+  for (const group of compatibleGroups) {
+    const in1 = cats1.some(cat => group.includes(cat))
+    const in2 = cats2.some(cat => group.includes(cat))
+    if (in1 && in2) return true
+  }
+
   return false
 }
 

@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
-import { loadCandidatesFromSheet, DetailedCandidate } from './google-sheets'
+import { DetailedCandidate } from './google-sheets'
+import { loadCandidates } from './candidates'
 import { EnhancedProposal } from '../types'
 
 // ============ פונקציות עזר לניהול הצעות ============
@@ -34,15 +35,15 @@ export const loadFailedProposals = async (accessToken: string): Promise<Enhanced
       throw error
     }
 
-    // טעינת מועמדים מהגיליון
+    // טעינת מועמדים - חכם! (Supabase או Google Sheets)
     let candidatesData: { males: DetailedCandidate[], females: DetailedCandidate[] } = { males: [], females: [] }
-    
-    if (shadchan.google_sheet_id && accessToken) {
-      try {
-        candidatesData = await loadCandidatesFromSheet(accessToken, shadchan.google_sheet_id)
-      } catch (error) {
-        console.warn('לא ניתן לטעון מועמדים מהגיליון להיסטוריה:', error)
-      }
+
+    try {
+      const result = await loadCandidates(shadchan.id, accessToken, shadchan.google_sheet_id)
+      candidatesData = { males: result.males, females: result.females }
+      console.log(`📊 טעינת מועמדים להיסטוריה ממקור: ${result.source}`)
+    } catch (error) {
+      console.warn('לא ניתן לטעון מועמדים להיסטוריה:', error)
     }
 
     // שילוב נתוני הצעות עם פרטי מועמדים (כמו ב-loadEnhancedProposals)
@@ -302,15 +303,15 @@ export const loadEnhancedProposals = async (accessToken: string): Promise<Enhanc
       throw error
     }
 
-    // טעינת מועמדים מהגיליון
+    // טעינת מועמדים - חכם! (Supabase או Google Sheets)
     let candidatesData: { males: DetailedCandidate[], females: DetailedCandidate[] } = { males: [], females: [] }
-    
-    if (shadchan.google_sheet_id && accessToken) {
-      try {
-        candidatesData = await loadCandidatesFromSheet(accessToken, shadchan.google_sheet_id)
-      } catch (error) {
-        console.warn('לא ניתן לטעון מועמדים מהגיליון:', error)
-      }
+
+    try {
+      const result = await loadCandidates(shadchan.id, accessToken, shadchan.google_sheet_id)
+      candidatesData = { males: result.males, females: result.females }
+      console.log(`📊 טעינת מועמדים להצעות פעילות ממקור: ${result.source}`)
+    } catch (error) {
+      console.warn('לא ניתן לטעון מועמדים להצעות פעילות:', error)
     }
 
     // שילוב נתוני הצעות עם פרטי מועמדים

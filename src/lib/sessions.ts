@@ -343,23 +343,25 @@ export const moveMatchToProposals = async (match: MatchProposal): Promise<void> 
     const boyRowId = match.boy_row_id || match.maleId || 'unknown'
     const girlRowId = match.girl_row_id || match.femaleId || 'unknown'
 
-
+    // זיהוי מקור הנתונים - האם זה UUID (Supabase) או row_id (Sheets)?
+    const isSupabaseSource = boyRowId.length > 20 && !boyRowId.includes('_') // UUID הוא ארוך ללא _
+    console.log(`📊 מקור נתונים: ${isSupabaseSource ? 'Supabase (UUID)' : 'Google Sheets (row_id)'}`)
 
     try {
           // בדיקה מתקדמת יותר - נבדוק אם יש הצעה קיימת שנוצרה לפני יותר מ-5 שניות
     const existingProposal = await checkIfProposalExistsAdvanced(shadchan.id, boyRowId, girlRowId)
     if (existingProposal) {
       const timeDiff = Date.now() - new Date(existingProposal.created_at).getTime()
-      
+
       // אם ההצעה נוצרה לפני יותר מ-5 שניות, זו הצעה אמיתית קיימת
       if (timeDiff > 5000) {
         const boyDisplayName = match.maleName || 'בחור לא ידוע'
         const girlDisplayName = match.femaleName || 'בחורה לא ידועה'
-        
+
         alert(`💡 ההצעה הזו כבר מאושרת!\n\n` +
               `${boyDisplayName} ו${girlDisplayName} כבר מופיעים ברשימת ההצעות הפעילות שלך.\n\n` +
               `ניתן לעבור לטאב "הצעות פעילות" כדי לראות את הסטטוס הנוכחי.`)
-        
+
         return
       }
     }
@@ -370,7 +372,7 @@ export const moveMatchToProposals = async (match: MatchProposal): Promise<void> 
         alert('⚠️ יש בעיה באימות המערכת. אנא רענן את הדף והתחבר מחדש.')
         throw new Error('שגיאת אימות - נדרש רענון')
       }
-      
+
       // שגיאות אחרות - נמשיך בתהליך
     }
 
@@ -382,43 +384,52 @@ export const moveMatchToProposals = async (match: MatchProposal): Promise<void> 
 
     // יצירת ai_reasoning מפורט עם כל המידע
     const detailedReasoning = createDetailedReasoning(match)
-    
+
     // נתונים בסיסיים שקיימים במסד הנתונים
-    const basicProposalData = {
+    const basicProposalData: any = {
       shadchan_id: shadchan.id,
       boy_row_id: boyRowId,
       girl_row_id: girlRowId,
       match_score: score,
       ai_reasoning: detailedReasoning,
       status: 'ready_for_processing',
-      original_session_id: activeSession?.id || null
+      original_session_id: activeSession?.id || null,
+      // שדה חדש - מקור הנתונים
+      data_source: isSupabaseSource ? 'supabase' : 'google_sheets'
     }
 
+    // אם המקור הוא Supabase, נוסיף גם את ה-UUIDs
+    if (isSupabaseSource) {
+      basicProposalData.boy_candidate_id = boyRowId
+      basicProposalData.girl_candidate_id = girlRowId
+      console.log(`✅ נוספו UUIDs מ-Supabase: boy=${boyRowId.substring(0, 8)}..., girl=${girlRowId.substring(0, 8)}...`)
+    }
+
+    // שימוש ב-upsert במקום insert - אם קיים, יעדכן; אם לא, יצור
     const { error } = await supabase
       .from('match_proposals')
-      .insert(basicProposalData)
+      .upsert(basicProposalData, {
+        onConflict: 'shadchan_id,boy_row_id,girl_row_id',
+        ignoreDuplicates: false
+      })
 
     if (error) {
       console.error('שגיאה בהוספת הצעה:', error)
       console.error('פרטי השגיאה המלאים:', JSON.stringify(error, null, 2))
-      
-      // אם זה עדיין שגיאת 409 אחרי הבדיקה, זה יכול להיות race condition
-      if (error.code === '23505') { // UNIQUE constraint violation
-        alert(`⚠️ נראה שההצעה נוספה זה עתה על ידי פעולה אחרת.\n\nמומלץ לרענן את הדף ולבדוק בטאב "הצעות פעילות".`)
-        throw new Error('ההצעה כבר קיימת (race condition)')
-      }
-      
-      // שגיאות נוספות
+
+      // שגיאות
       if (error.code === '23502') { // NOT NULL constraint violation
         throw new Error('חסרים נתונים חובה בהצעה')
       }
-      
+
       if (error.code === '23514') { // CHECK constraint violation
         throw new Error('סטטוס ההצעה לא תקין')
       }
-      
+
       throw error
     }
+
+    console.log(`✅ הצעה נוספה/עודכנה בהצלחה: ${boyRowId} ← → ${girlRowId}`)
 
   } catch (error) {
     console.error('❌ שגיאה בהעברת התאמה להצעות:', error)

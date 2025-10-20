@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { Heart, Users, Upload, Settings, TrendingUp, AlertTriangle, ArrowLeft, History, Trash2, Eye, Loader2, X, User, MessageSquare } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { debugAuthStatus, refreshAuthToken } from '@/lib/auth'
-import { loadCandidatesFromSheet, DetailedCandidate } from '@/lib/google-sheets'
+import { DetailedCandidate } from '@/lib/google-sheets'
+import { loadCandidates } from '@/lib/candidates'
 import { generateMatches } from '@/lib/openai'
 import { MatchProposal, AdvancedMatchingSettings } from '@/types'
 import { Button } from '@/components/ui/Button'
@@ -699,37 +700,55 @@ const MatchesTab = ({
         progress: { current: 30, total: 100, message: 'טוען נתוני מועמדים מהגיליון...' }
       })
       
-      // קבלת ה-sheetId תחילה ממסד הנתונים, ואז מ-localStorage כגיבוי
+      // קבלת ה-shadchanId ו-sheetId מהמסד נתונים
       let sheetId = null
-      
+      let currentShadchanId: string | null = null
+
       try {
         const { data: { user } } = await supabase.auth.getUser()
-        if (user) {
-          const { data: settings } = await supabase
-            .from('shadchanim')
-            .select('google_sheet_id')
-            .eq('auth_user_id', user.id)
-            .single()
-          
-          sheetId = settings?.google_sheet_id
+        if (!user) {
+          throw new Error('משתמש לא מחובר')
+        }
+
+        const { data: settings, error: settingsError } = await supabase
+          .from('shadchanim')
+          .select('id, google_sheet_id')
+          .eq('auth_user_id', user.id)
+          .single()
+
+        if (settingsError) {
+          console.error('שגיאה בטעינת הגדרות שדכן:', settingsError)
+          throw new Error('לא נמצא פרופיל שדכן. אנא צור פרופיל חדש.')
+        }
+
+        if (settings) {
+          currentShadchanId = settings.id
+          sheetId = settings.google_sheet_id
+          console.log('✅ נטען shadchanId:', currentShadchanId)
         }
       } catch (error) {
-        console.warn('לא ניתן לטעון הגדרות ממסד נתונים, נסה localStorage:', error)
+        console.error('שגיאה קריטית בטעינת פרטי שדכן:', error)
+        throw error
       }
-      
+
       // אם לא נמצא במסד הנתונים, נסה localStorage
       if (!sheetId) {
         sheetId = localStorage.getItem('sheetId')
       }
-      
-      if (!sheetId) {
-        throw new Error('לא נמצא מזהה גיליון. אנא הגדר את הגיליון בטאב ההגדרות.')
+
+      // וידוא שיש shadchanId
+      if (!currentShadchanId) {
+        throw new Error('לא נמצא מזהה שדכן. אנא התחבר מחדש.')
       }
-      
-      const candidatesData = await loadCandidatesFromSheet(accessToken!, sheetId)
+
+      // טעינה חכמה - ינסה Supabase קודם, אחר כך Google Sheets
+      const result = await loadCandidates(currentShadchanId, accessToken, sheetId)
+      const candidatesData = { males: result.males, females: result.females }
+
+      console.log(`📊 טעינת מועמדים לסריקה ממקור: ${result.source}`)
 
       if (candidatesData.males.length === 0 || candidatesData.females.length === 0) {
-        throw new Error('לא נמצאו מועמדים בגיליון')
+        throw new Error('לא נמצאו מועמדים. אנא הוסף מועמדים בטאבים "בנים" ו"בנות" או חבר גיליון Google Sheets.')
       }
 
       // יצירת התאמות עם AI
@@ -1050,22 +1069,129 @@ const MatchesTab = ({
 // פונקציית עזר לעדכון סטטוס התאמה
 const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newStatus: 'ready_for_processing' | 'rejected', onProposalCountChange?: (count: number) => void) => {
   // עדכון המערך המקומי
-  const updatedMatches = matches.map(m => 
+  const updatedMatches = matches.map(m =>
     m.id === matchId ? { ...m, status: newStatus } : m
   )
-  
+
   // שמירה מקומית
   localStorage.setItem('currentMatches', JSON.stringify(updatedMatches))
-  
+
+  // 🔥 עדכון ב-match_proposals בסופהבייס
+  const matchToUpdate = updatedMatches.find(m => m.id === matchId)
+  if (matchToUpdate) {
+    try {
+      // בדיקה אם ההצעה כבר קיימת ב-match_proposals
+      const { data: existingProposal } = await supabase
+        .from('match_proposals')
+        .select('id')
+        .eq('id', matchId)
+        .single()
+
+      if (existingProposal) {
+        // עדכון הסטטוס בטבלה אם היא קיימת
+        const { error: updateError } = await supabase
+          .from('match_proposals')
+          .update({ status: newStatus })
+          .eq('id', matchId)
+
+        if (updateError) {
+          console.error('❌ שגיאה בעדכון match_proposals:', updateError)
+        } else {
+          console.log(`✅ עודכן סטטוס ב-match_proposals: ${matchId} → ${newStatus}`)
+        }
+      } else {
+        // ההצעה לא קיימת - צריך ליצור רשומה חדשה (במיוחד אם נדחתה!)
+        console.log(`ℹ️ ההצעה לא קיימת ב-match_proposals, יוצר רשומה חדשה עם סטטוס: ${newStatus}`)
+
+        // קבלת shadchan_id
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) throw new Error('לא מחובר למערכת')
+
+        const { data: shadchan } = await supabase
+          .from('shadchanim')
+          .select('id')
+          .eq('auth_user_id', user.id)
+          .single()
+
+        if (!shadchan) throw new Error('לא נמצא פרופיל שדכן')
+
+        // יצירת רשומה חדשה ב-match_proposals עם כל השדות הרלוונטיים
+        const score = matchToUpdate.finalScore ? Math.round(matchToUpdate.finalScore * 10) / 100 : 0
+        const boyId = matchToUpdate.maleId || matchToUpdate.boy_row_id
+        const girlId = matchToUpdate.femaleId || matchToUpdate.girl_row_id
+
+        // קבלת הסשן הפעיל לחיבור
+        const activeSession = await getActiveSession()
+
+        // בניית ai_reasoning מפורט
+        let detailedReasoning = ''
+        if (matchToUpdate.logicalScore || matchToUpdate.gptScore || matchToUpdate.finalScore) {
+          const scores = []
+          if (matchToUpdate.logicalScore) scores.push(`🧮 לוגי: ${matchToUpdate.logicalScore.toFixed(1)}/10`)
+          if (matchToUpdate.gptScore) scores.push(`🤖 GPT: ${matchToUpdate.gptScore}/10`)
+          if (matchToUpdate.finalScore) scores.push(`🎯 סופי: ${matchToUpdate.finalScore.toFixed(1)}/10`)
+          detailedReasoning += `ציונים: ${scores.join(' ')}\n`
+        }
+        if (matchToUpdate.summary) {
+          detailedReasoning += `💭 סיכום: ${matchToUpdate.summary}\n`
+        }
+        if (matchToUpdate.strengths && matchToUpdate.strengths.length > 0) {
+          detailedReasoning += `✅ נקודות חוזק:\n${matchToUpdate.strengths.map(s => `• ${s}`).join('\n')}\n`
+        }
+        if (matchToUpdate.concerns && matchToUpdate.concerns.length > 0) {
+          detailedReasoning += `⚠️ נקודות לתשומת לב:\n${matchToUpdate.concerns.map(c => `• ${c}`).join('\n')}`
+        }
+        if (!detailedReasoning) {
+          detailedReasoning = matchToUpdate.ai_reasoning || 'התאמה נדחתה'
+        }
+
+        // זיהוי מקור הנתונים
+        const isSupabaseSource = boyId.length > 20 && !boyId.includes('_')
+
+        const proposalData: any = {
+          shadchan_id: shadchan.id,
+          boy_row_id: boyId,
+          girl_row_id: girlId,
+          match_score: score,
+          ai_reasoning: detailedReasoning,
+          status: newStatus,
+          original_session_id: activeSession?.id || null,
+          data_source: isSupabaseSource ? 'supabase' : 'google_sheets',
+          contact_history: [],
+          notes_history: []
+        }
+
+        // אם המקור הוא Supabase, נוסיף גם את ה-UUIDs
+        if (isSupabaseSource) {
+          proposalData.boy_candidate_id = boyId
+          proposalData.girl_candidate_id = girlId
+        }
+
+        const { error: insertError } = await supabase
+          .from('match_proposals')
+          .insert(proposalData)
+
+        if (insertError) {
+          console.error('❌ שגיאה ביצירת רשומה ב-match_proposals:', insertError)
+        } else {
+          console.log(`✅ נוצרה רשומה חדשה ב-match_proposals: ${matchId} → ${newStatus}`)
+        }
+      }
+
+    } catch (error) {
+      console.error('❌ שגיאה בעדכון סופהבייס:', error)
+    }
+  }
+
   // שמירה בסשן פעיל - טעינה מחדש של הסשן הפעיל לוודא שיש לנו את הנתונים העדכניים
   try {
     const currentActiveSession = await getActiveSession()
     if (currentActiveSession) {
       // עדכון רק ההתאמה הספציפית בסשן הפעיל
-      const updatedSessionData = currentActiveSession.session_data.map(m => 
+      const updatedSessionData = currentActiveSession.session_data.map(m =>
         m.id === matchId ? { ...m, status: newStatus } : m
       )
-      
+
       await updateActiveSession(updatedSessionData)
     }
   } catch (error) {
@@ -1073,20 +1199,20 @@ const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newS
     // אם יש שגיאה, נשתמש בנתונים המקומיים
     await updateActiveSession(updatedMatches)
   }
-  
+
   // אם אושר - העברה להצעות פעילות
   if (newStatus === 'ready_for_processing') {
     const approvedMatch = updatedMatches.find(m => m.id === matchId)
     if (approvedMatch) {
       await moveMatchToProposals(approvedMatch)
-      
+
       // עדכון מיידי של מונה ההצעות הפעילות
       setTimeout(async () => {
         const { data: currentProposals } = await supabase
           .from('match_proposals')
           .select('id')
           .in('status', ['ready_for_processing', 'restored_to_active', 'ready_for_contact', 'contacting', 'awaiting_response', 'schedule_meeting', 'meeting_scheduled', 'in_meeting_process', 'meeting_completed', 'completed'])
-        
+
         const count = currentProposals?.length || 0
         if (onProposalCountChange) {
           onProposalCountChange(count)
@@ -1094,7 +1220,7 @@ const updateMatchStatus = async (matches: MatchProposal[], matchId: string, newS
       }, 200) // המתנה קצרה לוודא שההצעה נשמרה במסד הנתונים
     }
   }
-  
+
   return updatedMatches
 }
 
@@ -2342,13 +2468,17 @@ const ImportTab: React.FC<{ accessToken: string | null }> = ({ accessToken }) =>
         localStorage.setItem('sheetId', settings.google_sheet_id)
       }
 
-      const data = await loadCandidatesFromSheet(accessToken!, sheetId)
-      
+      // טעינה חכמה - Supabase או Google Sheets
+      const result = await loadCandidates(shadchanId!, accessToken, sheetId)
+      const data = { males: result.males, females: result.females }
+
+      console.log(`📊 טעינת מועמדים ממקור: ${result.source}`)
+
       // שמירת הנתונים ב-localStorage
       localStorage.setItem('importedCandidates', JSON.stringify(data))
-      
+
       // setCandidates(data)
-      
+
       console.log(`✅ נטענו ${data.males?.length || 0} בנים ו-${data.females?.length || 0} בנות`)
       
     } catch (error: any) {
