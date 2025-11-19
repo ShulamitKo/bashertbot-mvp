@@ -1,12 +1,21 @@
 import OpenAI from 'openai'
 import { MatchProposal, AdvancedMatchingSettings } from '../types'
-import { 
+import {
   DetailedCandidate,
-  applyHardFilters, 
-  calculateLogicalScore,  
+  applyHardFilters,
+  calculateLogicalScore,
 } from './google-sheets'
 import { supabase } from './supabase'
 import { buildSystemPrompt, createMatchPrompt } from './prompt-generator'
+
+// 🆕 תוצאת generateMatches - כוללת גם מטא-דטה
+export interface GenerateMatchesResult {
+  matches: MatchProposal[]           // ההתאמות שנותחו
+  gptAnalyzedCount: number           // כמה זוגות נותחו ב-GPT
+  totalPotentialPairs: number        // סה"כ זוגות פוטנציאליים (עברו סינון קשיח ולוגי)
+  displayedCount: number             // כמה מוצגים בפועל
+  availableToLoad: number            // כמה זוגות נוספים זמינים לטעינה
+}
 
 const openai = new OpenAI({
   apiKey: (import.meta as any).env.VITE_OPENAI_API_KEY,
@@ -423,23 +432,25 @@ const processPairsInBatches = async (
   return matches
 }
 
-// הפונקציה הראשית המשופרת - מבוססת על הגישה החכמה שלך
+// הפונקציה הראשית המשופרת - גישה A: טעינה הדרגתית חכמה
 export const generateMatches = async (
-  males: DetailedCandidate[], 
+  males: DetailedCandidate[],
   females: DetailedCandidate[],
-  settings?: AdvancedMatchingSettings
+  settings?: AdvancedMatchingSettings,
+  offset: number = 0  // 🆕 היסט לטעינה הדרגתית (0 = סריקה ראשונית)
 ): Promise<MatchProposal[]> => {
   // הגדרות קבועות ומותאמות אישית
   const LOGICAL_THRESHOLD = 5  // סף לוגי קבוע איכותי (5/10)
-  const maxGptCandidates = settings?.maxMatches || 20  // כמות זוגות מובילים (שעברו בדיקת היתכנות) לשליחה ל-GPT
-  const maxMatches = maxGptCandidates  // מחזיר את כל מה שחוזר מ-GPT (ללא הגבלה נוספת)
+  const gptBatchSize = settings?.gptBatchSize || 30  // 🆕 כמה זוגות לשלוח ל-GPT (ברירת מחדל: 30)
+  const maxMatches = settings?.maxMatches || 10      // כמה התאמות להציג בפועל
   const weights = settings?.weights
   const hardFilters = settings?.hardFilters
   const gptSettings = settings?.gptSettings
   const customPrompt = settings?.customGptSettings?.customPrompt
-  console.log(`🚀 מתחיל תהליך התאמה חכם משופר`)
+
+  console.log(`🚀 מתחיל תהליך התאמה חכם - גישה A (היברידית)`)
   console.log(`📊 כמות בחורים: ${males.length}, בחורות: ${females.length}`)
-  console.log(`⚙️ סף לוגי קבוע: ${LOGICAL_THRESHOLD}/10, מקסימום ל-GPT: ${maxGptCandidates}, יוחזרו: ${maxMatches}`)
+  console.log(`⚙️ סף לוגי: ${LOGICAL_THRESHOLD}/10, באצ' GPT: ${gptBatchSize}, להציג: ${maxMatches}, היסט: ${offset}`)
 
   // שלב 1+2: יצירת זוגות פוטנציאליים עם סינון וניקוד (עכשיו כולל בדיקת קיימות)
   const potentialPairs = await createPotentialPairs(males, females, LOGICAL_THRESHOLD, weights, hardFilters)
@@ -458,27 +469,31 @@ export const generateMatches = async (
     return []
   }
 
-  // **חידוש: מיון לפי ציון לוגי והגבלת כמות לפני GPT**
+  // 🆕 מיון לפי ציון לוגי והגבלת כמות עם תמיכה בהיסט (offset)
   console.log(`📊 נמצאו ${potentialPairs.length} זוגות פוטנציאליים`)
-  
+
   // מיון לפי ציון לוגי (מהגבוה לנמוך)
   potentialPairs.sort((a, b) => b.logicalScore - a.logicalScore)
-  
+
   // 🟦 DEBUG: טווח ציונים לוגיים
   console.log(`📈 [DEBUG] טווח ציונים לוגיים: ${potentialPairs[potentialPairs.length-1]?.logicalScore} - ${potentialPairs[0]?.logicalScore}`)
-  
-  // הגבלה למספר המקסימלי שקבע המשתמש (זוגות שעברו בדיקת היתכנות באלגוריתם)
-  const selectedPairs = potentialPairs.slice(0, maxGptCandidates)
-  
+
+  // 🆕 הגבלה עם תמיכה בהיסט - לטעינה הדרגתית
+  const selectedPairs = potentialPairs.slice(offset, offset + gptBatchSize)
+
   // 🟦 DEBUG: הזוגות שנבחרו ל-GPT
-  console.log(`🎯 [DEBUG] הזוגות שנבחרו לניתוח GPT:`)
-  selectedPairs.forEach((pair, index) => {
-    console.log(`${index + 1}. ${pair.male.name} + ${pair.female.name} (ציון לוגי: ${pair.logicalScore})`)
+  console.log(`🎯 [DEBUG] הזוגות שנבחרו לניתוח GPT (מקומות ${offset + 1}-${offset + selectedPairs.length}):`)
+  selectedPairs.slice(0, 5).forEach((pair, index) => {
+    console.log(`${offset + index + 1}. ${pair.male.name} + ${pair.female.name} (ציון לוגי: ${pair.logicalScore})`)
   })
-  
-  console.log(`🎯 נבחרו ${selectedPairs.length} הזוגות הטובים ביותר לניתוח GPT מתוך ${potentialPairs.length}`)
-  console.log(`📈 לאחר ניתוח GPT יוחזרו ${maxMatches} הטובות ביותר`)
+  if (selectedPairs.length > 5) {
+    console.log(`... ועוד ${selectedPairs.length - 5} זוגות`)
+  }
+
+  console.log(`🎯 נבחרו ${selectedPairs.length} זוגות לניתוח GPT מתוך ${potentialPairs.length}`)
+  console.log(`📈 מציג ${Math.min(maxMatches, selectedPairs.length)} הטובות ביותר, ${selectedPairs.length - maxMatches > 0 ? selectedPairs.length - maxMatches : 0} נשמרות ל"הצג עוד"`)
   console.log(`💰 חיסכון בעלות: ${((potentialPairs.length - selectedPairs.length) / potentialPairs.length * 100).toFixed(1)}%`)
+  console.log(`📊 נותרו ${potentialPairs.length - (offset + selectedPairs.length)} זוגות נוספים זמינים לטעינה`)
 
   // שלב 3: עיבוד הזוגות הנבחרים עם GPT
   const allMatches = await processPairsInBatches(selectedPairs, 3, gptSettings, customPrompt, settings) // 3 בקשות במקביל
@@ -507,14 +522,26 @@ export const generateMatches = async (
   })
 
   // סיכום סופי מפורט
-  console.log(`\n📈 סיכום תהליך ההתאמה החכם המשופר:`)
+  const availableToLoad = potentialPairs.length - (offset + selectedPairs.length)
+  console.log(`\n📈 סיכום תהליך ההתאמה החכם - גישה A:`)
   console.log(`   📊 זוגות פוטנציאליים שעברו סינון: ${potentialPairs.length}`)
-  console.log(`   🎯 נבחרו לניתוח GPT: ${selectedPairs.length}`)
+  console.log(`   🎯 נבחרו לניתוח GPT (באצ'): ${selectedPairs.length}`)
   console.log(`   🤖 נותחו בפועל ב-GPT: ${allMatches.length} זוגות`)
-  console.log(`   ✨ הוחזרו הטובות ביותר: ${topMatches.length}`)
+  console.log(`   ✨ מוצגים למשתמש: ${Math.min(maxMatches, topMatches.length)}`)
+  console.log(`   📦 נשמרו ל"הצג עוד": ${Math.max(0, topMatches.length - maxMatches)}`)
+  console.log(`   🔄 זוגות נוספים זמינים לטעינה: ${availableToLoad}`)
   console.log(`   📊 טווח ציונים: ${topMatches[topMatches.length-1]?.finalScore.toFixed(1)} - ${topMatches[0]?.finalScore.toFixed(1)}`)
-  console.log(`   💰 עלות משוערת: $${(allMatches.length * 0.0001).toFixed(4)} (במקום $${(potentialPairs.length * 0.0001).toFixed(4)})`)
-  console.log(`   ⚡ זמן חסוך: ~${Math.round((potentialPairs.length - selectedPairs.length) * 2)} שניות`)
+  console.log(`   💰 עלות באצ' זה: $${(allMatches.length * 0.0001).toFixed(4)}`)
+  console.log(`   ⚡ חיסכון בעלות: ${((potentialPairs.length - selectedPairs.length) / potentialPairs.length * 100).toFixed(1)}%`)
+
+  // 🆕 שמירת מטא-דטה גלובלית (נשתמש בה ב-UI)
+  ;(globalThis as any).__lastMatchingMetadata = {
+    gptAnalyzedCount: allMatches.length,
+    totalPotentialPairs: potentialPairs.length,
+    displayedCount: Math.min(maxMatches, topMatches.length),
+    availableToLoad: availableToLoad,
+    offset: offset
+  }
 
   return topMatches
 }

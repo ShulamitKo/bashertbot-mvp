@@ -628,10 +628,21 @@ const MatchesTab = ({
   const [matches, setMatches] = useState<MatchProposal[]>([])
   const [loading, setLoading] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
-  const [candidates] = useState<{ males: DetailedCandidate[], females: DetailedCandidate[] } | null>(null)
+  const [candidates, setCandidates] = useState<{ males: DetailedCandidate[], females: DetailedCandidate[] } | null>(null) // 🆕 שינוי ל-setCandidates
   const [error, setError] = useState<string | null>(null)
   const [showNewScanWarning, setShowNewScanWarning] = useState(false)
   const [unprocessedCount, setUnprocessedCount] = useState(0)
+
+  // 🆕 גישה 3 - כפתור חכם (היברידי)
+  const [currentPage, setCurrentPage] = useState(1) // 🆕 עמוד נוכחי
+  const itemsPerPage = 10 // 🆕 קבוע - 10 התאמות בעמוד
+  const [displayLimit, setDisplayLimit] = useState(10) // 🆕 כמה להציג מתוך כל המנותחות
+  const [matchingMetadata, setMatchingMetadata] = useState<{
+    gptAnalyzedCount: number      // סה"כ זוגות שנשלחו ל-GPT ונותחו
+    totalPotentialPairs: number   // סה"כ זוגות פוטנציאליים (עברו סינון קשיח+לוגי)
+    availableToLoad: number       // כמה זוגות נוספים זמינים לניתוח GPT
+    offset: number                // היסט נוכחי (למעקב)
+  } | null>(null)
 
   // טעינת הסשן הפעיל בעת העלאת הקומפוננט
   useEffect(() => {
@@ -644,8 +655,30 @@ const MatchesTab = ({
       if (activeSession && activeSession.session_data.length > 0) {
         // טעינת ההתאמות כמו שהן - ללא שינוי סטטוס
         const matches: MatchProposal[] = activeSession.session_data as MatchProposal[];
-        
+
         setMatches(matches);
+
+        // 🆕 טעינת מטא-דטה אם קיימת בסשן
+        if (activeSession.gpt_analyzed_count !== undefined && activeSession.available_to_load !== undefined) {
+          // חישוב offset מהנתונים הקיימים
+          const currentOffset = activeSession.gpt_analyzed_count || 0
+
+          setMatchingMetadata({
+            gptAnalyzedCount: activeSession.gpt_analyzed_count || 0,
+            totalPotentialPairs: currentOffset + (activeSession.available_to_load || 0),
+            availableToLoad: activeSession.available_to_load || 0,
+            offset: currentOffset
+          })
+
+          // עדכון displayLimit בהתאם לכמה התאמות יש
+          setDisplayLimit(matches.length)
+
+          console.log('📊 טען metadata מסשן:', {
+            gptAnalyzedCount: activeSession.gpt_analyzed_count,
+            availableToLoad: activeSession.available_to_load,
+            displayedMatches: matches.length
+          })
+        }
       }
     } catch (error) {
       console.error('❌ שגיאה בטעינת סשן פעיל:', error)
@@ -669,6 +702,138 @@ const MatchesTab = ({
     }
 
     await performNewScan()
+  }
+
+  // 🆕 פונקציה חכמה לטעינת התאמות נוספות
+  // אם יש מנותחים שלא מוצגים → הצג אותם (בחינם)
+  // אחרת → שלח עוד batch ל-GPT (עולה כסף)
+  const loadMoreMatches = async () => {
+    if (!matchingMetadata) {
+      console.error('❌ לא ניתן לטעון עוד התאמות - חסרים נתונים')
+      return
+    }
+
+    // בדיקה: האם יש התאמות מנותחות שלא מוצגות?
+    const hasUnDisplayedAnalyzed = displayLimit < matches.length
+
+    if (hasUnDisplayedAnalyzed) {
+      // ✅ מצב 1: יש מנותחים שלא מוצגים - הצג אותם (בחינם!)
+      console.log(`📋 מציג עוד 10 מתוך ${matches.length - displayLimit} התאמות מנותחות`)
+      const newLimit = Math.min(displayLimit + 10, matches.length)
+      setDisplayLimit(newLimit)
+
+      // מעבר לעמוד האחרון
+      const totalPages = Math.ceil(newLimit / itemsPerPage)
+      setCurrentPage(totalPages)
+
+      return
+    }
+
+    // 🚀 מצב 2: אין עוד מנותחים - צריך לשלוח ל-GPT
+    if (matchingMetadata.availableToLoad === 0) {
+      console.log('ℹ️ אין עוד זוגות זמינים לטעינה')
+      return
+    }
+
+    try {
+      setLoading(true)
+      setError(null)
+
+      const gptBatchSize = advancedSettings?.gptBatchSize || 30
+
+      setGlobalScanState({
+        isScanning: true,
+        progress: { current: 30, total: 100, message: `🚀 מכין לניתוח ${gptBatchSize} זוגות נוספים ב-GPT...` }
+      })
+
+      // קבלת הנתונים הדרושים
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('משתמש לא מחובר')
+
+      const { data: settings } = await supabase
+        .from('shadchanim')
+        .select('id, google_sheet_id')
+        .eq('auth_user_id', user.id)
+        .single()
+
+      if (!settings) throw new Error('לא נמצא פרופיל שדכן')
+
+      // 🆕 טעינת מועמדים אם לא קיימים ב-state
+      let candidatesData = candidates
+      if (!candidatesData) {
+        console.log('📥 טוען נתוני מועמדים לראשונה...')
+        setGlobalScanState({
+          isScanning: true,
+          progress: { current: 40, total: 100, message: '📥 טוען נתוני מועמדים...' }
+        })
+
+        const sheetId = settings.google_sheet_id || localStorage.getItem('sheetId')
+        const result = await loadCandidates(settings.id, accessToken, sheetId)
+        candidatesData = { males: result.males, females: result.females }
+
+        // שמירה ב-state לפעם הבאה
+        setCandidates(candidatesData)
+      }
+
+      // חישוב offset חדש - ה-offset הנוכחי הוא המספר הכולל של זוגות שכבר נותחו
+      const newOffset = matchingMetadata.gptAnalyzedCount
+
+      console.log(`🔄 טוען התאמות נוספות מ-GPT עם offset: ${newOffset}`)
+
+      setGlobalScanState({
+        isScanning: true,
+        progress: { current: 60, total: 100, message: `🤖 מנתח זוגות ${newOffset + 1}-${newOffset + gptBatchSize} ב-GPT...` }
+      })
+
+      // קריאה ל-generateMatches עם offset
+      const additionalMatches = await generateMatches(
+        candidatesData.males,
+        candidatesData.females,
+        advancedSettings || undefined,
+        newOffset // 🆕 offset מעודכן
+      )
+
+      // עדכון המטא-דטה והצגת תוצאות
+      const newMetadata = (globalThis as any).__lastMatchingMetadata
+      if (newMetadata) {
+        setGlobalScanState({
+          isScanning: true,
+          progress: {
+            current: 90,
+            total: 100,
+            message: `✅ נוספו ${additionalMatches.length} התאמות חדשות! (סה"כ ${newMetadata.gptAnalyzedCount} נותחו)`
+          }
+        })
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        setMatchingMetadata(newMetadata)
+      }
+
+      // הוספת ההתאמות החדשות לקיימות
+      const allMatches = [...matches, ...additionalMatches]
+      setMatches(allMatches)
+
+      // עדכון displayLimit להציג את כל המנותחים החדשים
+      setDisplayLimit(allMatches.length)
+
+      // עדכון הסשן עם metadata
+      await updateActiveSession(allMatches, {
+        gptAnalyzedCount: newMetadata.gptAnalyzedCount,
+        availableToLoad: newMetadata.availableToLoad
+      })
+
+      // 🆕 מעבר לעמוד האחרון (שבו ההתאמות החדשות)
+      const totalPages = Math.ceil(allMatches.length / itemsPerPage)
+      setCurrentPage(totalPages)
+
+      setLoading(false)
+      setGlobalScanState({ isScanning: false, progress: null })
+
+    } catch (error: any) {
+      console.error('❌ שגיאה בטעינת התאמות נוספות:', error)
+      setError(`שגיאה בטעינת התאמות נוספות: ${error.message}`)
+      setLoading(false)
+      setGlobalScanState({ isScanning: false, progress: null })
+    }
   }
 
   // פונקציה לביצוע סריקה חדשה
@@ -751,17 +916,41 @@ const MatchesTab = ({
         throw new Error('לא נמצאו מועמדים. אנא הוסף מועמדים בטאבים "בנים" ו"בנות" או חבר גיליון Google Sheets.')
       }
 
+      // 🆕 שמירת המועמדים לשימוש בטעינה הדרגתית
+      setCandidates(candidatesData)
+
       // יצירת התאמות עם AI
       setGlobalScanState({
         isScanning: true,
-        progress: { current: 60, total: 100, message: 'מנתח מועמדים עם בינה מלאכותית...' }
+        progress: { current: 60, total: 100, message: `🔍 סורק ${candidatesData.males.length} בנים × ${candidatesData.females.length} בנות...` }
       })
-      
+
       const generatedMatches = await generateMatches(
         candidatesData.males,
         candidatesData.females,
-        advancedSettings || undefined // משתמש בהגדרות השדכן או ברירת מחדל
+        advancedSettings || undefined, // משתמש בהגדרות השדכן או ברירת מחדל
+        0 // 🆕 offset=0 לסריקה ראשונית
       )
+
+      // 🆕 קבלת המטא-דטה מהסריקה והצגת תוצאות
+      const metadata = (globalThis as any).__lastMatchingMetadata
+      if (metadata) {
+        setGlobalScanState({
+          isScanning: true,
+          progress: {
+            current: 80,
+            total: 100,
+            message: `✅ נותחו ${metadata.gptAnalyzedCount} זוגות טובים ביותר מתוך ${metadata.totalPotentialPairs} אפשריים`
+          }
+        })
+        // המתנה קצרה כדי שהמשתמש יראה את ההודעה
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        setMatchingMetadata(metadata)
+        console.log('📊 מטא-דטה של סריקה:', metadata)
+      }
+
+      // 🆕 איפוס displayLimit ל-10 בסריקה חדשה
+      setDisplayLimit(10)
 
       if (generatedMatches.length === 0) {
         setMatches([])
@@ -769,22 +958,28 @@ const MatchesTab = ({
         setGlobalScanState({ isScanning: false, progress: null })
         return
       }
-      
+
       // יצירת סשן חדש ושמירת ההתאמות
       setGlobalScanState({
         isScanning: true,
         progress: { current: 90, total: 100, message: 'שומר התאמות במערכת...' }
       })
-      
+
       await createNewSession()
-      await updateActiveSession(generatedMatches)
-      
+      await updateActiveSession(generatedMatches, {
+        gptAnalyzedCount: metadata?.gptAnalyzedCount,
+        availableToLoad: metadata?.availableToLoad
+      })
+
+      // 🆕 איפוס לעמוד הראשון בסריקה חדשה
+      setCurrentPage(1)
+
       // סיום מוצלח
       setGlobalScanState({
         isScanning: true,
         progress: { current: 100, total: 100, message: 'הושלם בהצלחה! ✨' }
       })
-      
+
       setMatches(generatedMatches)
       setLoading(false)
       
@@ -934,10 +1129,21 @@ const MatchesTab = ({
         <LoadingSpinner message="מכין את המערכת..." />
       ) : matches && matches.length > 0 ? (
         <div className="space-y-6">
-          {matches.map((match) => (
-            <MatchCard 
-              key={match.id} 
-              match={match} 
+          {/* 🆕 חישוב עימוד עם displayLimit */}
+          {(() => {
+            // הצגת רק התאמות עד displayLimit
+            const displayedMatches = matches.slice(0, displayLimit)
+            const startIndex = (currentPage - 1) * itemsPerPage
+            const endIndex = startIndex + itemsPerPage
+            const currentMatches = displayedMatches.slice(startIndex, endIndex)
+            const totalPages = Math.ceil(displayedMatches.length / itemsPerPage)
+
+            return (
+              <>
+                {currentMatches.map((match) => (
+            <MatchCard
+              key={match.id}
+              match={match}
               accessToken={accessToken}
                               onStatusUpdate={async (matchId, newStatus) => {
                   try {
@@ -1002,6 +1208,163 @@ const MatchesTab = ({
                 }}
             />
           ))}
+
+                {/* 🆕 מערכת עימוד (Pagination) */}
+                {totalPages > 1 && (
+                  <div className="flex justify-center items-center gap-2 mt-8">
+                    {/* כפתור עמוד קודם */}
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      disabled={currentPage === 1}
+                      className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                        currentPage === 1
+                          ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                          : 'bg-blue-500 text-white hover:bg-blue-600 shadow hover:shadow-lg'
+                      }`}
+                    >
+                      ←  קודם
+                    </button>
+
+                    {/* מספרי עמודים */}
+                    <div className="flex gap-2">
+                      {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                        <button
+                          key={page}
+                          onClick={() => setCurrentPage(page)}
+                          className={`w-10 h-10 rounded-lg font-medium transition-all ${
+                            currentPage === page
+                              ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg scale-110'
+                              : 'bg-gray-200 text-gray-700 hover:bg-gray-300 hover:shadow'
+                          }`}
+                        >
+                          {page}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* כפתור עמוד הבא */}
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                      disabled={currentPage === totalPages}
+                      className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                        currentPage === totalPages
+                          ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                          : 'bg-blue-500 text-white hover:bg-blue-600 shadow hover:shadow-lg'
+                      }`}
+                    >
+                      הבא →
+                    </button>
+                  </div>
+                )}
+
+          {/* כפתורים נוספים */}
+          <div className="mt-8 space-y-4">
+
+            {/* 🆕 כפתור חכם - תלוי אם יש מנותחים או צריך GPT */}
+            {matchingMetadata && (() => {
+              const hasUnDisplayedAnalyzed = displayLimit < matches.length
+              const hasAvailableForGPT = matchingMetadata.availableToLoad > 0
+              const unDisplayedCount = matches.length - displayLimit
+
+              // הצג כפתור רק אם יש מה לטעון (מנותחים או זמינים ל-GPT)
+              if (!hasUnDisplayedAnalyzed && !hasAvailableForGPT) {
+                return null
+              }
+
+              return (
+                <div className="flex flex-col items-center gap-3">
+                  <div className="text-center text-sm text-gray-600">
+                    {hasUnDisplayedAnalyzed ? (
+                      <p>
+                        📋 יש עוד <strong>{unDisplayedCount} התאמות מנותחות</strong> שטרם הוצגו
+                        <span className="text-xs block mt-1">(לא דורש ניתוח נוסף)</span>
+                      </p>
+                    ) : (
+                      <>
+                        <p>🔍 נמצאו עוד {matchingMetadata.availableToLoad} זוגות פוטנציאליים שטרם נותחו</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          (מתוך סה"כ {matchingMetadata.totalPotentialPairs} זוגות שעברו סינון ראשוני)
+                        </p>
+                      </>
+                    )}
+                  </div>
+                  <button
+                    onClick={loadMoreMatches}
+                    disabled={loading || globalScanState.isScanning}
+                    className={`px-8 py-4 rounded-lg font-medium transition-all flex items-center gap-3 ${
+                      (loading || globalScanState.isScanning)
+                        ? 'bg-gradient-to-r from-blue-500 to-purple-500 text-white shadow-lg animate-pulse'
+                        : hasUnDisplayedAnalyzed
+                          ? 'bg-gradient-to-r from-green-600 to-teal-600 text-white hover:from-green-700 hover:to-teal-700 shadow-lg hover:shadow-xl hover:scale-105'
+                          : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700 shadow-lg hover:shadow-xl hover:scale-105'
+                    } disabled:opacity-50`}
+                  >
+                    {(loading || globalScanState.isScanning) ? (
+                      <>
+                        <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
+                        <span>טוען...</span>
+                      </>
+                    ) : hasUnDisplayedAnalyzed ? (
+                      <>
+                        <span>📋</span>
+                        <span>הצג עוד 10 התאמות מנותחות</span>
+                        <span className="text-xs opacity-90">(בחינם - כבר נותחו!)</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>🚀</span>
+                        <span>טען עוד {advancedSettings?.loadMoreBatchSize || 30} התאמות מ-GPT</span>
+                        <span className="text-xs opacity-90">(דורש ניתוח חדש)</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )
+            })()}
+
+            {/* מידע סטטיסטי */}
+            {matchingMetadata && (() => {
+              const displayedMatches = matches.slice(0, displayLimit)
+              const totalPages = Math.ceil(displayedMatches.length / itemsPerPage)
+              const unDisplayedCount = matches.length - displayLimit
+
+              return (
+              <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="text-sm text-gray-700 space-y-1">
+                  <p className="font-semibold text-blue-900 mb-2">📊 סטטיסטיקת התאמות:</p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <span className="text-gray-600">✅ זוגות שעברו סינון ראשוני:</span>
+                      <span className="font-bold text-blue-700 mr-2">{matchingMetadata.totalPotentialPairs}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">🤖 נותחו ב-GPT (סה"כ):</span>
+                      <span className="font-bold text-purple-700 mr-2">{matches.length}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">👁️ מוצגות כעת:</span>
+                      <span className="font-bold text-teal-700 mr-2">{displayLimit}</span>
+                      {unDisplayedCount > 0 && (
+                        <span className="text-xs text-gray-500">({unDisplayedCount} נוספות מנותחות)</span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-gray-600">📄 עמוד נוכחי:</span>
+                      <span className="font-bold text-green-700 mr-2">{currentPage} / {totalPages}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">🔄 זמינים לטעינה:</span>
+                      <span className="font-bold text-orange-700 mr-2">{matchingMetadata.availableToLoad}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              )
+            })()}
+          </div>
+              </>
+            )
+          })()}
         </div>
       ) : (
         <div className="text-center py-12">

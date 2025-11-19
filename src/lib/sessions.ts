@@ -57,6 +57,11 @@ export interface MatchingSession {
   total_matches: number
   processed_matches: number
   session_data: MatchProposal[]
+
+  // 🆕 גישה A - מעקב אחרי זוגות שנותחו ב-GPT
+  gpt_analyzed_count?: number    // כמה זוגות נותחו ב-GPT בסך הכל
+  available_to_load?: number     // כמה זוגות פוטנציאליים נוספים זמינים לטעינה
+  displayed_count?: number       // כמה מוצגים כרגע למשתמש
 }
 
 // קבלת הסשן הפעיל הנוכחי
@@ -210,7 +215,7 @@ const pushActiveToHistory = async (shadchanId: string): Promise<void> => {
 }
 
 // עדכון נתוני הסשן הפעיל
-export const updateActiveSession = async (matches: MatchProposal[]): Promise<void> => {
+export const updateActiveSession = async (matches: MatchProposal[], metadata?: { gptAnalyzedCount?: number, availableToLoad?: number }): Promise<void> => {
   try {
     const activeSession = await getActiveSession()
     if (!activeSession) {
@@ -219,16 +224,50 @@ export const updateActiveSession = async (matches: MatchProposal[]): Promise<voi
 
     const processedCount = matches.filter(m => m.status !== 'pending').length
 
+    // 🆕 הכנת אובייקט העדכון עם metadata אם קיים
+    const updateData: any = {
+      session_data: matches,
+      total_matches: matches.length,
+      processed_matches: processedCount
+    }
+
+    // 🆕 הוספת metadata אם הועבר
+    if (metadata) {
+      if (metadata.gptAnalyzedCount !== undefined) {
+        updateData.gpt_analyzed_count = metadata.gptAnalyzedCount
+      }
+      if (metadata.availableToLoad !== undefined) {
+        updateData.available_to_load = metadata.availableToLoad
+      }
+    }
+
     const { error } = await supabase
       .from('matching_sessions')
-      .update({
-        session_data: matches,
-        total_matches: matches.length,
-        processed_matches: processedCount
-      })
+      .update(updateData)
       .eq('id', activeSession.id)
 
-    if (error) throw error
+    if (error) {
+      // 🔧 אם השגיאה היא בגלל עמודות חסרות - התעלם (מיגרציה טרם רצה)
+      if (error.code === 'PGRST204' && (
+        error.message?.includes('gpt_analyzed_count') ||
+        error.message?.includes('available_to_load')
+      )) {
+        console.warn('⚠️ עמודות metadata חסרות בטבלת matching_sessions. אנא הרץ את MIGRATION_FIX.sql')
+        // מנסה שוב ללא metadata
+        const fallbackData = { ...updateData }
+        delete fallbackData.gpt_analyzed_count
+        delete fallbackData.available_to_load
+
+        const { error: fallbackError } = await supabase
+          .from('matching_sessions')
+          .update(fallbackData)
+          .eq('id', activeSession.id)
+
+        if (fallbackError) throw fallbackError
+      } else {
+        throw error
+      }
+    }
 
   } catch (error) {
     console.error('❌ שגיאה בעדכון סשן:', error)
